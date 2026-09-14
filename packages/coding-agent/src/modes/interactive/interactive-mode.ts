@@ -1045,7 +1045,7 @@ export class InteractiveMode {
 			const timeout = setTimeout(() => controller.abort(), 15_000);
 			void refreshModelCatalogs(this.session.modelRuntime, controller.signal)
 				.then(() => this.updateAvailableProviderCount())
-				.catch(() => { })
+				.catch(() => {})
 				.finally(() => clearTimeout(timeout));
 		}
 
@@ -3025,6 +3025,11 @@ export class InteractiveMode {
 				this.editor.setText("");
 				return;
 			}
+			if (text === "/clear") {
+				this.editor.setText("");
+				this.handleFrontendClearCommand();
+				return;
+			}
 			if (text === "/name" || text.startsWith("/name ")) {
 				this.handleNameCommand(text);
 				this.editor.setText("");
@@ -4034,13 +4039,13 @@ export class InteractiveMode {
 		this.isShuttingDown = true;
 		try {
 			this.unregisterSignalHandlers();
-		} catch { }
+		} catch {}
 		try {
 			killTrackedDetachedChildren();
-		} catch { }
+		} catch {}
 		try {
 			this.ui.stop();
-		} catch { }
+		} catch {}
 		console.error(`${APP_NAME} exiting due to uncaughtException:`);
 		console.error(error);
 		process.exit(1);
@@ -4110,11 +4115,11 @@ export class InteractiveMode {
 		// Keep the event loop alive while suspended. Without this, stopping the TUI
 		// can leave Node with no ref'ed handles, causing the process to exit on fg
 		// before the SIGCONT handler gets a chance to restore the terminal.
-		const suspendKeepAlive = setInterval(() => { }, 2 ** 30);
+		const suspendKeepAlive = setInterval(() => {}, 2 ** 30);
 
 		// Ignore SIGINT while suspended so Ctrl+C in the terminal does not
 		// kill the backgrounded process. The handler is removed on resume.
-		const ignoreSigint = () => { };
+		const ignoreSigint = () => {};
 		process.on("SIGINT", ignoreSigint);
 
 		// Set up handler to restore TUI when resumed
@@ -4453,7 +4458,8 @@ export class InteractiveMode {
 			this.compactionQueuedMessages = queuedMessages;
 			this.updatePendingMessagesDisplay();
 			this.showError(
-				`Failed to send queued message${queuedMessages.length > 1 ? "s" : ""}: ${error instanceof Error ? error.message : String(error)
+				`Failed to send queued message${queuedMessages.length > 1 ? "s" : ""}: ${
+					error instanceof Error ? error.message : String(error)
 				}`,
 			);
 		};
@@ -5447,9 +5453,9 @@ export class InteractiveMode {
 			const authStatus = this.session.modelRuntime.getProviderAuthStatus(provider.id);
 			const status = authStatus.configured
 				? {
-					type: this.session.modelRuntime.isUsingOAuth(provider.id) ? ("oauth" as const) : ("api_key" as const),
-					source: authStatus.label ?? authStatus.source,
-				}
+						type: this.session.modelRuntime.isUsingOAuth(provider.id) ? ("oauth" as const) : ("api_key" as const),
+						source: authStatus.label ?? authStatus.source,
+					}
 				: undefined;
 			if ((!authType || authType === "oauth") && provider.auth.oauth) {
 				options.push({
@@ -5948,7 +5954,7 @@ export class InteractiveMode {
 
 	private async showLoginDialog(providerId: string, providerName: string): Promise<void> {
 		const previousModel = this.session.model;
-		const dialog = new LoginDialogComponent(this.ui, providerId, (_success, _message) => { }, providerName);
+		const dialog = new LoginDialogComponent(this.ui, providerId, (_success, _message) => {}, providerName);
 		this.editorContainer.clear();
 		this.editorContainer.addChild(dialog);
 		this.ui.setFocus(dialog);
@@ -6299,9 +6305,9 @@ export class InteractiveMode {
 		const changelogMarkdown =
 			allEntries.length > 0
 				? allEntries
-					.reverse()
-					.map((e) => normalizeChangelogLinks(e.content, e))
-					.join("\n\n")
+						.reverse()
+						.map((e) => normalizeChangelogLinks(e.content, e))
+						.join("\n\n")
 				: "No changelog entries found.";
 
 		this.chatContainer.addChild(new Spacer(1));
@@ -6457,6 +6463,32 @@ export class InteractiveMode {
 		} catch (error: unknown) {
 			await this.handleFatalRuntimeError("Failed to create session", error);
 		}
+	}
+
+	private handleFrontendClearCommand(): void {
+		if (this.session.isStreaming) {
+			this.showWarning("Wait for the current response to finish before clearing the conversation.");
+			return;
+		}
+		if (this.session.isCompacting) {
+			this.showWarning("Wait for compaction to finish before clearing the conversation.");
+			return;
+		}
+		if (this.session.isBashRunning) {
+			this.showWarning("Wait for the current bash command to finish before clearing the conversation.");
+			return;
+		}
+
+		// Frontend-only clear: persisted session entries stay saved and resume/reload can render them again.
+		this.disposeActiveSelector();
+		this.clearStatusIndicator();
+		this.chatContainer.clear();
+		this.pendingTools.clear();
+		this.streamingComponent = undefined;
+		this.streamingMessage = undefined;
+		this.lastStatusSpacer = undefined;
+		this.lastStatusText = undefined;
+		this.showStatus("Conversation cleared from screen. Session history is still saved.");
 	}
 
 	private handleDebugCommand(): void {
