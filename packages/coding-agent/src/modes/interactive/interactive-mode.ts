@@ -6402,6 +6402,13 @@ export class InteractiveMode {
 			model: this.session.model,
 			thinkingLevel: this.session.thinkingLevel,
 			contextWindow: this.session.getContextUsage()?.contextWindow ?? this.session.model?.contextWindow ?? 0,
+			autoCompactThresholdTokens: this.session.autoCompactionEnabled
+				? Math.max(
+						0,
+						(this.session.getContextUsage()?.contextWindow ?? this.session.model?.contextWindow ?? 0) -
+							this.settingsManager.getCompactionReserveTokens(this.session.model),
+					)
+				: undefined,
 			categories: CONTEXT_USAGE_CATEGORY_ORDER.map((category) => ({
 				...category,
 				tokens: tokensByCategory.get(category.id) ?? 0,

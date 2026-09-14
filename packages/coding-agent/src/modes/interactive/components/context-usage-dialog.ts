@@ -27,6 +27,7 @@ export interface ContextUsageDialogData {
 	model: ContextUsageDialogModel | undefined;
 	thinkingLevel: ThinkingLevel;
 	contextWindow: number;
+	autoCompactThresholdTokens: number | undefined;
 	categories: ContextUsageCategory[];
 }
 
@@ -96,6 +97,7 @@ function renderUsageBar(
 	freeTokens: number,
 	contextWindow: number,
 	width: number,
+	autoCompactThresholdTokens: number | undefined,
 ): string {
 	const barWidth = Math.max(MIN_BAR_WIDTH, width);
 	if (contextWindow <= 0) {
@@ -103,23 +105,44 @@ function renderUsageBar(
 	}
 
 	let usedCells = 0;
-	const parts: string[] = [];
+	const barCells = Array.from({ length: barWidth }, () => ({
+		color: "borderMuted" as ThemeColor,
+		char: "█",
+	}));
 	for (const category of categories) {
 		if (category.tokens <= 0) continue;
 		const rawCells = Math.round((category.tokens / contextWindow) * barWidth);
-		const cells = Math.max(1, Math.min(barWidth - usedCells, rawCells));
-		if (cells <= 0) continue;
-		usedCells += cells;
-		parts.push(theme.fg(category.color, "█".repeat(cells)));
+		const segmentCells = Math.max(1, Math.min(barWidth - usedCells, rawCells));
+		if (segmentCells <= 0) continue;
+		for (let index = usedCells; index < usedCells + segmentCells; index++) {
+			const cell = barCells[index];
+			if (cell) {
+				cell.color = category.color;
+			}
+		}
+		usedCells += segmentCells;
 		if (usedCells >= barWidth) break;
 	}
 
 	const remainingCells = Math.max(0, barWidth - usedCells);
-	if (remainingCells > 0) {
-		const freeCells = freeTokens > 0 ? remainingCells : 0;
-		parts.push(theme.fg("borderMuted", "█".repeat(freeCells)));
+	if (remainingCells > 0 && freeTokens <= 0) {
+		for (let index = usedCells; index < barWidth; index++) {
+			const cell = barCells[index];
+			if (cell) {
+				cell.char = " ";
+			}
+		}
 	}
-	return parts.join("");
+	if (autoCompactThresholdTokens !== undefined) {
+		const ratio = Math.max(0, Math.min(1, autoCompactThresholdTokens / contextWindow));
+		const markerColumn = Math.round((barWidth - 1) * ratio);
+		const marker = barCells[markerColumn];
+		if (marker) {
+			marker.char = "│";
+			marker.color = "assistantMessageText";
+		}
+	}
+	return barCells.map((cell) => theme.fg(cell.color, cell.char)).join("");
 }
 
 function renderLegendLine(
@@ -198,7 +221,13 @@ export class ContextUsageDialog implements Component, Focusable {
 		lines.push(panelLine("", width));
 		lines.push(
 			panelLine(
-				`${" ".repeat(HORIZONTAL_PADDING)}${renderUsageBar(categories, freeTokens, contextWindow, barWidth)}`,
+				`${" ".repeat(HORIZONTAL_PADDING)}${renderUsageBar(
+					categories,
+					freeTokens,
+					contextWindow,
+					barWidth,
+					this.data.autoCompactThresholdTokens,
+				)}`,
 				width,
 			),
 		);
