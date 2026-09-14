@@ -129,6 +129,14 @@
 					"$ref": "#/$defs/colorValue",
 					"description": "Default text color (usually empty string)"
 				},
+				"assistantMessageText": {
+					"$ref": "#/$defs/colorValue",
+					"description": "Assistant response body text color (falls back to text when omitted)"
+				},
+				"footerText": {
+					"$ref": "#/$defs/colorValue",
+					"description": "Footer metadata text color (falls back to dim when omitted)"
+				},
 				"thinkingText": {
 					"$ref": "#/$defs/colorValue",
 					"description": "Thinking block text color"
@@ -160,6 +168,10 @@
 				"userMessageText": {
 					"$ref": "#/$defs/colorValue",
 					"description": "User message text color"
+				},
+				"editorBg": {
+					"$ref": "#/$defs/colorValue",
+					"description": "Input editor background color (falls back to userMessageBg when omitted)"
 				},
 				"customMessageBg": {
 					"$ref": "#/$defs/colorValue",

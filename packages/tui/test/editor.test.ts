@@ -40,6 +40,46 @@ async function flushAutocomplete(): Promise<void> {
 }
 
 describe("Editor component", () => {
+	it("supports borderless rendering with a background style", () => {
+		const editor = new Editor(createTestTUI(), defaultEditorTheme, {
+			border: false,
+			backgroundStyle: (line) => `[${line}]`,
+		});
+		editor.setText("hello");
+
+		const lines = editor.render(12);
+
+		assert.strictEqual(lines.length, 1);
+		assert.strictEqual(lines[0]?.startsWith("["), true);
+		assert.strictEqual(lines[0]?.endsWith("]"), true);
+		assert.strictEqual(stripVTControlCharacters(lines[0] ?? "").includes("─"), false);
+	});
+
+	it("renders borderless vertical padding and placeholder text", () => {
+		const editor = new Editor(createTestTUI(), defaultEditorTheme, {
+			border: false,
+			paddingX: 1,
+			paddingY: 1,
+			backgroundStyle: (line) => `[${line}]`,
+			placeholder: "  Ask Pi to do anything",
+			placeholderStyle: (line) => `<${line}>`,
+		});
+
+		const emptyLines = editor.render(32);
+
+		assert.strictEqual(emptyLines.length, 3);
+		assert.strictEqual(stripVTControlCharacters(emptyLines[0] ?? ""), `[${" ".repeat(32)}]`);
+		assert.match(stripVTControlCharacters(emptyLines[1] ?? ""), /<  Ask Pi to do anything>/);
+		assert.strictEqual(stripVTControlCharacters(emptyLines[2] ?? ""), `[${" ".repeat(32)}]`);
+
+		editor.setText("hello");
+		const populatedLines = editor.render(32);
+
+		assert.strictEqual(populatedLines.length, 3);
+		assert.strictEqual(stripVTControlCharacters(populatedLines[1] ?? "").includes("Ask Pi"), false);
+		assert.strictEqual(stripVTControlCharacters(populatedLines[1] ?? "").includes("hello"), true);
+	});
+
 	describe("Prompt history navigation", () => {
 		it("does nothing on Up arrow when history is empty", () => {
 			const editor = new Editor(createTestTUI(), defaultEditorTheme);
@@ -860,7 +900,7 @@ describe("Editor component", () => {
 				let lines = editor.render(width + paddingX);
 				let contentLines = lines.slice(1, -1);
 				assert.strictEqual(contentLines.length, 1, "Should be 1 content line before wrap");
-				assert.ok(contentLines[0]!.endsWith("\x1b[7m \x1b[0m"), "Cursor should be at end of line");
+				assert.ok(contentLines[0]!.endsWith("\x1b[7m \x1b[27m"), "Cursor should be at end of line");
 
 				// Type 1 more → text wraps to second line
 				editor.handleInput("a");

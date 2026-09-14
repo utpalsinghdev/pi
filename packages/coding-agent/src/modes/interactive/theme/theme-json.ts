@@ -31,11 +31,14 @@ const ThemeJsonSchema = Type.Object({
 		muted: ColorValueSchema,
 		dim: ColorValueSchema,
 		text: ColorValueSchema,
+		assistantMessageText: Type.Optional(ColorValueSchema),
+		footerText: Type.Optional(ColorValueSchema),
 		thinkingText: ColorValueSchema,
 		// Scrollbar (2 optional colors)
 		scrollbarTrack: Type.Optional(ColorValueSchema),
 		scrollbarThumb: Type.Optional(ColorValueSchema),
 		// Backgrounds & Content Text (11 required, 2 optional)
+		editorBg: Type.Optional(ColorValueSchema),
 		selectedBg: ColorValueSchema,
 		searchMatchBg: Type.Optional(ColorValueSchema),
 		searchMatchText: Type.Optional(ColorValueSchema),

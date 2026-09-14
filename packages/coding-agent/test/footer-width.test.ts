@@ -1,7 +1,7 @@
 import { visibleWidth } from "@earendil-works/pi-tui";
 import { beforeAll, describe, expect, it } from "vitest";
 import type { AgentSession } from "../src/core/agent-session.ts";
-import type { ReadonlyFooterDataProvider } from "../src/core/footer-data-provider.ts";
+import type { GitDiffStats, ReadonlyFooterDataProvider } from "../src/core/footer-data-provider.ts";
 import { FooterComponent, formatCwdForFooter } from "../src/modes/interactive/components/footer.ts";
 import { initTheme } from "../src/modes/interactive/theme/theme.ts";
 import { stripAnsi } from "../src/utils/ansi.ts";
@@ -87,9 +87,10 @@ function createSession(options: {
 	return session as unknown as AgentSession;
 }
 
-function createFooterData(providerCount: number): ReadonlyFooterDataProvider {
+function createFooterData(providerCount: number, gitDiffStats: GitDiffStats | null = null): ReadonlyFooterDataProvider {
 	const provider = {
 		getGitBranch: () => "main",
+		getGitDiffStats: () => gitDiffStats,
 		getExtensionStatuses: () => new Map<string, string>(),
 		getAvailableProviderCount: () => providerCount,
 		onBranchChange: (callback: () => void) => {
@@ -128,7 +129,7 @@ describe("FooterComponent width handling", () => {
 		}
 	});
 
-	it("keeps stats line within width for wide model and provider names", () => {
+	it("keeps metadata line within width for wide model names", () => {
 		const width = 60;
 		const session = createSession({
 			sessionName: "",
@@ -136,13 +137,6 @@ describe("FooterComponent width handling", () => {
 			provider: "공급자",
 			reasoning: true,
 			thinkingLevel: "high",
-			usage: {
-				input: 12_345,
-				output: 6_789,
-				cacheRead: 0,
-				cacheWrite: 0,
-				cost: { total: 1.234 },
-			},
 		});
 		const footer = new FooterComponent(session, createFooterData(2));
 
@@ -152,101 +146,37 @@ describe("FooterComponent width handling", () => {
 		}
 	});
 
-	it("includes summary and tool result usage in the total cost", () => {
+	it("renders cursor-style model metadata and location", () => {
 		const session = createSession({
-			sessionName: "",
-			usage: {
-				input: 100,
-				output: 10,
-				cacheRead: 0,
-				cacheWrite: 0,
-				cost: { total: 0.5 },
-			},
-			branchUsage: {
-				input: 20,
-				output: 5,
-				cacheRead: 0,
-				cacheWrite: 0,
-				cost: { total: 0.25 },
-			},
-			compactionUsage: {
-				input: 5,
-				output: 2,
-				cacheRead: 0,
-				cacheWrite: 0,
-				cost: { total: 0.125 },
-			},
-			toolUsage: {
-				input: 15,
-				output: 3,
-				cacheRead: 0,
-				cacheWrite: 0,
-				cost: { total: 0.375 },
-			},
+			sessionName: "review",
+			modelId: "gpt-5.5",
+			reasoning: true,
+			thinkingLevel: "max",
 		});
-		const footer = new FooterComponent(session, createFooterData(1));
+		const footer = new FooterComponent(
+			session,
+			createFooterData(1, { filesChanged: 8, insertions: 94, deletions: 227 }),
+		);
+		const lines = footer.render(120).map((line) => stripAnsi(line));
 
-		const statsLine = stripAnsi(footer.render(120)[1]);
-		expect(statsLine).toContain("$1.250");
+		expect(lines[0]).toBe(" GPT-5.5 200k · Max · 12.3% · main · 8 edited · +94 -227 ");
+		expect(lines[1]).toBe(" /tmp/project · review ");
 	});
 
-	it("shows the latest cache hit rate when cache usage is present", () => {
+	it("omits diff stats when there are no edited files", () => {
 		const session = createSession({
 			sessionName: "",
-			usage: {
-				input: 100,
-				output: 10,
-				cacheRead: 50,
-				cacheWrite: 50,
-				cost: { total: 0.001 },
-			},
+			modelId: "gpt-5.5",
+			reasoning: true,
+			thinkingLevel: "max",
 		});
-		const footer = new FooterComponent(session, createFooterData(1));
+		const footer = new FooterComponent(
+			session,
+			createFooterData(1, { filesChanged: 0, insertions: 0, deletions: 0 }),
+		);
+		const lines = footer.render(120).map((line) => stripAnsi(line));
 
-		const statsLine = stripAnsi(footer.render(120)[1]);
-		expect(statsLine).toContain("CH25.0%");
-	});
-
-	it("marks Kimi Coding costs as subscription estimates", () => {
-		const session = createSession({
-			sessionName: "",
-			provider: "kimi-coding",
-			usage: {
-				input: 100,
-				output: 10,
-				cacheRead: 0,
-				cacheWrite: 0,
-				cost: { total: 1.234 },
-			},
-		});
-		const footer = new FooterComponent(session, createFooterData(1));
-
-		expect(stripAnsi(footer.render(120)[1])).toContain("$1.234 (sub)");
-	});
-
-	it("marks explicitly identified subscription auth", () => {
-		const session = createSession({ sessionName: "", provider: "anthropic", usingSubscription: true });
-		const footer = new FooterComponent(session, createFooterData(1));
-
-		expect(stripAnsi(footer.render(120)[1])).toContain("$0.000 (sub)");
-	});
-
-	it("does not mark generic OAuth sign-in as a subscription", () => {
-		const session = createSession({
-			sessionName: "",
-			provider: "openrouter",
-			usage: {
-				input: 100,
-				output: 10,
-				cacheRead: 0,
-				cacheWrite: 0,
-				cost: { total: 1.234 },
-			},
-		});
-		const footer = new FooterComponent(session, createFooterData(1));
-		const stats = stripAnsi(footer.render(120)[1]);
-
-		expect(stats).toContain("$1.234");
-		expect(stats).not.toContain("(sub)");
+		expect(lines[0]).toBe(" GPT-5.5 200k · Max · 12.3% · main ");
+		expect(lines[1]).toBe(" /tmp/project ");
 	});
 });
