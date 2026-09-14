@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 let resolvedBranch = "main";
 let diffNumstat = "";
+let gitStatus = "";
 
 vi.mock("child_process", () => ({
 	execFile: vi.fn(
@@ -31,6 +32,10 @@ vi.mock("child_process", () => ({
 				setTimeout(() => callback(null, diffNumstat, ""), 0);
 				return;
 			}
+			if (args[1] === "status") {
+				setTimeout(() => callback(null, gitStatus, ""), 0);
+				return;
+			}
 			setTimeout(() => callback(new Error("unsupported"), "", ""), 0);
 		},
 	),
@@ -40,6 +45,9 @@ vi.mock("child_process", () => ({
 		}
 		if (args[1] === "diff") {
 			return { status: 0, stdout: diffNumstat, stderr: "" };
+		}
+		if (args[1] === "status") {
+			return { status: 0, stdout: gitStatus, stderr: "" };
 		}
 		return { status: 1, stdout: "", stderr: "" };
 	}),
@@ -110,6 +118,7 @@ describe("FooterDataProvider reftable branch detection", () => {
 		tempDir = mkdtempSync(join(tmpdir(), "footer-data-provider-"));
 		resolvedBranch = "main";
 		diffNumstat = "";
+		gitStatus = "";
 		vi.mocked(spawnSync).mockClear();
 		vi.mocked(execFile).mockClear();
 	});
@@ -199,6 +208,33 @@ describe("FooterDataProvider reftable branch detection", () => {
 		}
 	});
 
+	it("includes untracked files in edited file count without adding line stats", () => {
+		const repoDir = createPlainRepo(tempDir);
+		process.chdir(repoDir);
+		diffNumstat = "2\t2\tcomponents/Footer/index.tsx\n";
+		gitStatus = " M components/Footer/index.tsx\n?? AGENTS.md\n";
+
+		const provider = new FooterDataProvider(repoDir);
+		try {
+			expect(provider.getGitDiffStats()).toEqual({
+				filesChanged: 2,
+				insertions: 2,
+				deletions: 2,
+			});
+			expect(vi.mocked(spawnSync)).toHaveBeenCalledWith(
+				"git",
+				["--no-optional-locks", "status", "--porcelain=v1", "--untracked-files=normal", "--"],
+				expect.objectContaining({
+					cwd: expect.stringMatching(/repo$/),
+					encoding: "utf8",
+					stdio: ["ignore", "pipe", "ignore"],
+				}),
+			);
+		} finally {
+			provider.dispose();
+		}
+	});
+
 	// Drive debounce behavior explicitly; native fs.watch delivery can race watcher startup.
 	it("does not notify listeners when reftable updates keep the same branch", async () => {
 		vi.useFakeTimers();
@@ -262,6 +298,7 @@ describe("FooterDataProvider reftable branch detection", () => {
 			provider.onBranchChange(onBranchChange);
 
 			writeFileSync(join(reftableDir, "tables.list"), "1\n");
+			emitReftableChange(provider);
 			await waitFor(() => vi.mocked(execFile).mock.calls.length === 1);
 			await waitFor(() => provider.getGitBranch() === "foo");
 

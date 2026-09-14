@@ -1,5 +1,13 @@
 import type { Component, Terminal, TUI } from "@earendil-works/pi-tui";
-import { Container, getKeybindings, isViewportTUI, ScrollView, setKeybindings, Text } from "@earendil-works/pi-tui";
+import {
+	Container,
+	getKeybindings,
+	isViewportTUI,
+	ScrollView,
+	setKeybindings,
+	stripTerminalSequences,
+	Text,
+} from "@earendil-works/pi-tui";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { VirtualTerminal } from "../../tui/test/virtual-terminal.ts";
 import { KeybindingsManager } from "../src/core/keybindings.ts";
@@ -226,6 +234,12 @@ type FrontendClearCommandPrototype = {
 
 const frontendClearCommandPrototype = InteractiveMode.prototype as unknown as FrontendClearCommandPrototype;
 
+type WorkingStatusMessagePrototype = {
+	formatWorkingStatusMessage(this: unknown, message: string): string;
+};
+
+const workingStatusMessagePrototype = InteractiveMode.prototype as unknown as WorkingStatusMessagePrototype;
+
 const createFrontendClearContext = (
 	session: FrontendClearCommandContext["session"] = {
 		isStreaming: false,
@@ -317,6 +331,17 @@ describe("InteractiveMode frontend clear command", () => {
 		expect(context.clearStatusIndicator).not.toHaveBeenCalled();
 		expect(context.showStatus).not.toHaveBeenCalled();
 		expect(context.showWarning).toHaveBeenCalledWith(warning);
+	});
+});
+
+describe("InteractiveMode working status message", () => {
+	it("does not append stale context tokens to the working label", () => {
+		initTheme("dark");
+
+		const message = workingStatusMessagePrototype.formatWorkingStatusMessage.call({}, "Working");
+
+		expect(stripTerminalSequences(message)).toBe("Working");
+		expect(stripTerminalSequences(message)).not.toContain("tokens");
 	});
 });
 

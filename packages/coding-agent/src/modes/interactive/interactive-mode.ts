@@ -2190,12 +2190,7 @@ export class InteractiveMode {
 	}
 
 	private formatWorkingStatusMessage(message: string): string {
-		const usage = this.session.getContextUsage();
-		const tokenSuffix =
-			usage?.tokens === undefined || usage.tokens === null
-				? ""
-				: ` ${theme.fg("footerText", `${formatTokens(usage.tokens)} tokens`)}`;
-		return `${theme.fg("assistantMessageText", message)}${tokenSuffix}`;
+		return theme.fg("assistantMessageText", message);
 	}
 
 	private showWorkingStatusIndicator(): void {
