@@ -64,6 +64,7 @@ import {
 	computeCacheWaste,
 	detectCacheMiss,
 } from "../../core/cache-stats.ts";
+import { estimateTokens } from "../../core/compaction/index.ts";
 import { DEFAULT_THINKING_LEVEL, THINKING_LEVEL_OPTIONS } from "../../core/defaults.ts";
 import type {
 	AutocompleteProviderFactory,
@@ -93,6 +94,7 @@ import type { ResourceDiagnostic } from "../../core/resource-loader.ts";
 import { formatMissingSessionCwdPrompt, MissingSessionCwdError } from "../../core/session-cwd.ts";
 import { type SessionEntry, SessionManager, sessionEntryToContextMessages } from "../../core/session-manager.ts";
 import type { FullscreenExitOutput, TuiMode } from "../../core/settings-manager.ts";
+import { formatSkillsForPrompt } from "../../core/skills.ts";
 import { BUILTIN_SLASH_COMMANDS } from "../../core/slash-commands.ts";
 import type { SourceInfo } from "../../core/source-info.ts";
 import { isInstallTelemetryEnabled } from "../../core/telemetry.ts";
@@ -116,6 +118,11 @@ import { AssistantMessageComponent } from "./components/assistant-message.ts";
 import { BashExecutionComponent } from "./components/bash-execution.ts";
 import { BranchSummaryMessageComponent } from "./components/branch-summary-message.ts";
 import { CompactionSummaryMessageComponent } from "./components/compaction-summary-message.ts";
+import {
+	type ContextUsageCategoryId,
+	ContextUsageDialog,
+	type ContextUsageDialogData,
+} from "./components/context-usage-dialog.ts";
 import { CustomEditor } from "./components/custom-editor.ts";
 import { CustomEntryComponent } from "./components/custom-entry.ts";
 import { CustomMessageComponent } from "./components/custom-message.ts";
@@ -253,6 +260,49 @@ function isDeadTerminalError(error: unknown): boolean {
 const ANTHROPIC_SUBSCRIPTION_AUTH_WARNING =
 	"Anthropic subscription auth is active. Third-party harness usage draws from extra usage and is billed per token, not your Claude plan limits. Manage extra usage at https://claude.ai/settings/usage. Disable this warning in /settings.";
 const DEFAULT_PROMPT_PLACEHOLDERS = ["  Ask Pi to do anything"] as const;
+type ContextToolInfo = ReturnType<AgentSession["getAllTools"]>[number];
+
+const CONTEXT_USAGE_CATEGORY_ORDER: Array<{
+	id: ContextUsageCategoryId;
+	label: string;
+	color: ThemeColor;
+}> = [
+	{ id: "systemPrompt", label: "System prompt", color: "warning" },
+	{ id: "rules", label: "Rules", color: "success" },
+	{ id: "mcp", label: "MCP", color: "error" },
+	{ id: "conversation", label: "Conversation", color: "warning" },
+	{ id: "toolDefinitions", label: "Tool definitions", color: "borderAccent" },
+	{ id: "skills", label: "Skills", color: "mdLink" },
+	{ id: "subagents", label: "Subagents", color: "thinkingMax" },
+];
+
+function estimateTextTokens(text: string): number {
+	return Math.ceil(text.length / 4);
+}
+
+function serializeToolForContextUsage(tool: ContextToolInfo): string {
+	return (
+		JSON.stringify({
+			name: tool.name,
+			description: tool.description,
+			parameters: tool.parameters,
+			promptGuidelines: tool.promptGuidelines,
+		}) ?? ""
+	);
+}
+
+function classifyToolContextCategory(tool: ContextToolInfo): ContextUsageCategoryId {
+	const source = tool.sourceInfo.source.toLowerCase();
+	const path = tool.sourceInfo.path.toLowerCase();
+	const name = tool.name.toLowerCase();
+	if (source.includes("subagent") || path.includes("subagent") || name.includes("subagent")) {
+		return "subagents";
+	}
+	if (tool.sourceInfo.source !== "builtin" && tool.sourceInfo.source !== "sdk") {
+		return "mcp";
+	}
+	return "toolDefinitions";
+}
 
 function isAnthropicSubscriptionAuthKey(apiKey: string | undefined): boolean {
 	return typeof apiKey === "string" && apiKey.startsWith("sk-ant-oat");
@@ -1045,7 +1095,7 @@ export class InteractiveMode {
 			const timeout = setTimeout(() => controller.abort(), 15_000);
 			void refreshModelCatalogs(this.session.modelRuntime, controller.signal)
 				.then(() => this.updateAvailableProviderCount())
-				.catch(() => { })
+				.catch(() => {})
 				.finally(() => clearTimeout(timeout));
 		}
 
@@ -3025,6 +3075,11 @@ export class InteractiveMode {
 				this.editor.setText("");
 				return;
 			}
+			if (text === "/clear") {
+				this.editor.setText("");
+				this.handleFrontendClearCommand();
+				return;
+			}
 			if (text === "/name" || text.startsWith("/name ")) {
 				this.handleNameCommand(text);
 				this.editor.setText("");
@@ -3043,6 +3098,11 @@ export class InteractiveMode {
 			if (text === "/hotkeys") {
 				this.handleHotkeysCommand();
 				this.editor.setText("");
+				return;
+			}
+			if (text === "/context") {
+				this.editor.setText("");
+				this.handleContextCommand();
 				return;
 			}
 			if (text === "/fork") {
@@ -4034,13 +4094,13 @@ export class InteractiveMode {
 		this.isShuttingDown = true;
 		try {
 			this.unregisterSignalHandlers();
-		} catch { }
+		} catch {}
 		try {
 			killTrackedDetachedChildren();
-		} catch { }
+		} catch {}
 		try {
 			this.ui.stop();
-		} catch { }
+		} catch {}
 		console.error(`${APP_NAME} exiting due to uncaughtException:`);
 		console.error(error);
 		process.exit(1);
@@ -4110,11 +4170,11 @@ export class InteractiveMode {
 		// Keep the event loop alive while suspended. Without this, stopping the TUI
 		// can leave Node with no ref'ed handles, causing the process to exit on fg
 		// before the SIGCONT handler gets a chance to restore the terminal.
-		const suspendKeepAlive = setInterval(() => { }, 2 ** 30);
+		const suspendKeepAlive = setInterval(() => {}, 2 ** 30);
 
 		// Ignore SIGINT while suspended so Ctrl+C in the terminal does not
 		// kill the backgrounded process. The handler is removed on resume.
-		const ignoreSigint = () => { };
+		const ignoreSigint = () => {};
 		process.on("SIGINT", ignoreSigint);
 
 		// Set up handler to restore TUI when resumed
@@ -4453,7 +4513,8 @@ export class InteractiveMode {
 			this.compactionQueuedMessages = queuedMessages;
 			this.updatePendingMessagesDisplay();
 			this.showError(
-				`Failed to send queued message${queuedMessages.length > 1 ? "s" : ""}: ${error instanceof Error ? error.message : String(error)
+				`Failed to send queued message${queuedMessages.length > 1 ? "s" : ""}: ${
+					error instanceof Error ? error.message : String(error)
 				}`,
 			);
 		};
@@ -5447,9 +5508,9 @@ export class InteractiveMode {
 			const authStatus = this.session.modelRuntime.getProviderAuthStatus(provider.id);
 			const status = authStatus.configured
 				? {
-					type: this.session.modelRuntime.isUsingOAuth(provider.id) ? ("oauth" as const) : ("api_key" as const),
-					source: authStatus.label ?? authStatus.source,
-				}
+						type: this.session.modelRuntime.isUsingOAuth(provider.id) ? ("oauth" as const) : ("api_key" as const),
+						source: authStatus.label ?? authStatus.source,
+					}
 				: undefined;
 			if ((!authType || authType === "oauth") && provider.auth.oauth) {
 				options.push({
@@ -5948,7 +6009,7 @@ export class InteractiveMode {
 
 	private async showLoginDialog(providerId: string, providerName: string): Promise<void> {
 		const previousModel = this.session.model;
-		const dialog = new LoginDialogComponent(this.ui, providerId, (_success, _message) => { }, providerName);
+		const dialog = new LoginDialogComponent(this.ui, providerId, (_success, _message) => {}, providerName);
 		this.editorContainer.clear();
 		this.editorContainer.addChild(dialog);
 		this.ui.setFocus(dialog);
@@ -6292,6 +6353,76 @@ export class InteractiveMode {
 		this.ui.requestRender();
 	}
 
+	private createContextUsageDialogData(): ContextUsageDialogData {
+		const activeToolNames = new Set(this.session.getActiveToolNames());
+		const toolTokensByCategory = new Map<ContextUsageCategoryId, number>([
+			["toolDefinitions", 0],
+			["mcp", 0],
+			["subagents", 0],
+		]);
+
+		for (const tool of this.session.getAllTools()) {
+			if (!activeToolNames.has(tool.name)) continue;
+			const category = classifyToolContextCategory(tool);
+			const current = toolTokensByCategory.get(category) ?? 0;
+			toolTokensByCategory.set(category, current + estimateTextTokens(serializeToolForContextUsage(tool)));
+		}
+
+		const contextFiles = this.session.resourceLoader.getAgentsFiles().agentsFiles;
+		const rulesText = contextFiles
+			.map(
+				({ path: filePath, content }) =>
+					`<project_instructions path="${filePath}">\n${content}\n</project_instructions>`,
+			)
+			.join("\n\n");
+		const rulesTokens = estimateTextTokens(rulesText);
+
+		const skillFileReadTool = (["read", "bash"] as const).find((toolName) => activeToolNames.has(toolName));
+		const skillsText = skillFileReadTool
+			? formatSkillsForPrompt(this.session.resourceLoader.getSkills().skills, skillFileReadTool)
+			: "";
+		const skillsTokens = estimateTextTokens(skillsText);
+		const systemPromptTokens = Math.max(
+			0,
+			estimateTextTokens(this.session.systemPrompt) - rulesTokens - skillsTokens,
+		);
+		const conversationTokens = this.session.messages.reduce((sum, message) => sum + estimateTokens(message), 0);
+
+		const tokensByCategory = new Map<ContextUsageCategoryId, number>([
+			["systemPrompt", systemPromptTokens],
+			["rules", rulesTokens],
+			["mcp", toolTokensByCategory.get("mcp") ?? 0],
+			["conversation", conversationTokens],
+			["toolDefinitions", toolTokensByCategory.get("toolDefinitions") ?? 0],
+			["skills", skillsTokens],
+			["subagents", toolTokensByCategory.get("subagents") ?? 0],
+		]);
+
+		return {
+			model: this.session.model,
+			thinkingLevel: this.session.thinkingLevel,
+			contextWindow: this.session.getContextUsage()?.contextWindow ?? this.session.model?.contextWindow ?? 0,
+			categories: CONTEXT_USAGE_CATEGORY_ORDER.map((category) => ({
+				...category,
+				tokens: tokensByCategory.get(category.id) ?? 0,
+			})),
+		};
+	}
+
+	private handleContextCommand(): void {
+		this.disposeActiveSelector();
+		let handle: OverlayHandle | undefined;
+		const dialog = new ContextUsageDialog(this.createContextUsageDialogData(), () => {
+			handle?.hide();
+		});
+		handle = this.ui.showOverlay(dialog, {
+			anchor: "bottom-center",
+			width: "100%",
+			maxHeight: "100%",
+			margin: 0,
+		});
+	}
+
 	private handleChangelogCommand(): void {
 		const changelogPath = getChangelogPath();
 		const allEntries = parseChangelog(changelogPath);
@@ -6299,9 +6430,9 @@ export class InteractiveMode {
 		const changelogMarkdown =
 			allEntries.length > 0
 				? allEntries
-					.reverse()
-					.map((e) => normalizeChangelogLinks(e.content, e))
-					.join("\n\n")
+						.reverse()
+						.map((e) => normalizeChangelogLinks(e.content, e))
+						.join("\n\n")
 				: "No changelog entries found.";
 
 		this.chatContainer.addChild(new Spacer(1));
@@ -6457,6 +6588,32 @@ export class InteractiveMode {
 		} catch (error: unknown) {
 			await this.handleFatalRuntimeError("Failed to create session", error);
 		}
+	}
+
+	private handleFrontendClearCommand(): void {
+		if (this.session.isStreaming) {
+			this.showWarning("Wait for the current response to finish before clearing the conversation.");
+			return;
+		}
+		if (this.session.isCompacting) {
+			this.showWarning("Wait for compaction to finish before clearing the conversation.");
+			return;
+		}
+		if (this.session.isBashRunning) {
+			this.showWarning("Wait for the current bash command to finish before clearing the conversation.");
+			return;
+		}
+
+		// Frontend-only clear: persisted session entries stay saved and resume/reload can render them again.
+		this.disposeActiveSelector();
+		this.clearStatusIndicator();
+		this.chatContainer.clear();
+		this.pendingTools.clear();
+		this.streamingComponent = undefined;
+		this.streamingMessage = undefined;
+		this.lastStatusSpacer = undefined;
+		this.lastStatusText = undefined;
+		this.showStatus("Conversation cleared from screen. Session history is still saved.");
 	}
 
 	private handleDebugCommand(): void {

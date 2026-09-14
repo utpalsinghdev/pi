@@ -4,6 +4,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { VirtualTerminal } from "../../tui/test/virtual-terminal.ts";
 import { KeybindingsManager } from "../src/core/keybindings.ts";
 import type { FullscreenExitOutput, TuiMode } from "../src/core/settings-manager.ts";
+import { BUILTIN_SLASH_COMMANDS } from "../src/core/slash-commands.ts";
 import {
 	BranchSummaryStatusIndicator,
 	CompactionStatusIndicator,
@@ -204,6 +205,120 @@ type CopyCommandPrototype = {
 };
 
 const copyCommandPrototype = InteractiveMode.prototype as unknown as CopyCommandPrototype;
+
+type FrontendClearCommandContext = {
+	session: { isStreaming: boolean; isCompacting: boolean; isBashRunning: boolean };
+	chatContainer: Container;
+	pendingTools: Map<string, unknown>;
+	streamingComponent: Component | undefined;
+	streamingMessage: unknown;
+	lastStatusSpacer: Component | undefined;
+	lastStatusText: Text | undefined;
+	clearStatusIndicator: () => void;
+	disposeActiveSelector: () => void;
+	showStatus: (message: string) => void;
+	showWarning: (message: string) => void;
+};
+
+type FrontendClearCommandPrototype = {
+	handleFrontendClearCommand(this: FrontendClearCommandContext): void;
+};
+
+const frontendClearCommandPrototype = InteractiveMode.prototype as unknown as FrontendClearCommandPrototype;
+
+const createFrontendClearContext = (
+	session: FrontendClearCommandContext["session"] = {
+		isStreaming: false,
+		isCompacting: false,
+		isBashRunning: false,
+	},
+): FrontendClearCommandContext => ({
+	session,
+	chatContainer: new Container(),
+	pendingTools: new Map<string, unknown>(),
+	streamingComponent: undefined,
+	streamingMessage: undefined,
+	lastStatusSpacer: undefined,
+	lastStatusText: undefined,
+	clearStatusIndicator: vi.fn(),
+	disposeActiveSelector: vi.fn(),
+	showStatus: vi.fn(),
+	showWarning: vi.fn(),
+});
+
+describe("InteractiveMode frontend clear command", () => {
+	it("advertises /clear as a built-in slash command", () => {
+		expect(BUILTIN_SLASH_COMMANDS).toContainEqual(
+			expect.objectContaining({
+				name: "clear",
+			}),
+		);
+	});
+
+	it("advertises /context as a built-in slash command", () => {
+		expect(BUILTIN_SLASH_COMMANDS).toContainEqual(
+			expect.objectContaining({
+				name: "context",
+			}),
+		);
+	});
+
+	it("clears rendered conversation without touching persisted session data", () => {
+		const context = createFrontendClearContext();
+		context.chatContainer.addChild(new Text("persisted message", 0, 0));
+		context.pendingTools.set("tool-call-id", {});
+		context.streamingComponent = new Text("streaming", 0, 0);
+		context.streamingMessage = { role: "assistant" };
+		context.lastStatusSpacer = new Text("", 0, 0);
+		context.lastStatusText = new Text("old status", 0, 0);
+
+		frontendClearCommandPrototype.handleFrontendClearCommand.call(context);
+
+		expect(context.disposeActiveSelector).toHaveBeenCalledOnce();
+		expect(context.clearStatusIndicator).toHaveBeenCalledOnce();
+		expect(context.chatContainer.children).toHaveLength(0);
+		expect(context.pendingTools.size).toBe(0);
+		expect(context.streamingComponent).toBeUndefined();
+		expect(context.streamingMessage).toBeUndefined();
+		expect(context.lastStatusSpacer).toBeUndefined();
+		expect(context.lastStatusText).toBeUndefined();
+		expect(context.showStatus).toHaveBeenCalledWith(
+			"Conversation cleared from screen. Session history is still saved.",
+		);
+		expect(context.showWarning).not.toHaveBeenCalled();
+	});
+
+	it.each([
+		[
+			"streaming",
+			{ isStreaming: true, isCompacting: false, isBashRunning: false },
+			"Wait for the current response to finish before clearing the conversation.",
+		],
+		[
+			"compacting",
+			{ isStreaming: false, isCompacting: true, isBashRunning: false },
+			"Wait for compaction to finish before clearing the conversation.",
+		],
+		[
+			"running bash",
+			{ isStreaming: false, isCompacting: false, isBashRunning: true },
+			"Wait for the current bash command to finish before clearing the conversation.",
+		],
+	] as const)("does not clear while %s", (_state, session, warning) => {
+		const context = createFrontendClearContext(session);
+		context.chatContainer.addChild(new Text("message", 0, 0));
+		context.pendingTools.set("tool-call-id", {});
+
+		frontendClearCommandPrototype.handleFrontendClearCommand.call(context);
+
+		expect(context.chatContainer.children).toHaveLength(1);
+		expect(context.pendingTools.size).toBe(1);
+		expect(context.disposeActiveSelector).not.toHaveBeenCalled();
+		expect(context.clearStatusIndicator).not.toHaveBeenCalled();
+		expect(context.showStatus).not.toHaveBeenCalled();
+		expect(context.showWarning).toHaveBeenCalledWith(warning);
+	});
+});
 
 describe("InteractiveMode copy confirmation", () => {
 	beforeEach(() => {

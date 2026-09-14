@@ -69,7 +69,7 @@ describe("Editor component", () => {
 
 		assert.strictEqual(emptyLines.length, 3);
 		assert.strictEqual(stripVTControlCharacters(emptyLines[0] ?? ""), `[${" ".repeat(32)}]`);
-		assert.match(stripVTControlCharacters(emptyLines[1] ?? ""), /<  Ask Pi to do anything>/);
+		assert.match(stripVTControlCharacters(emptyLines[1] ?? ""), /< {2}Ask Pi to do anything>/);
 		assert.strictEqual(stripVTControlCharacters(emptyLines[2] ?? ""), `[${" ".repeat(32)}]`);
 
 		editor.setText("hello");
