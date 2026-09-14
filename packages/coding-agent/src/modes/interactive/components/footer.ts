@@ -6,6 +6,7 @@ import type { ReadonlyFooterDataProvider } from "../../../core/footer-data-provi
 import { theme } from "../theme/theme.ts";
 
 const FOOTER_HORIZONTAL_PADDING = 1;
+const FOOTER_CONTEXT_BAR_WIDTH = 10;
 
 /**
  * Sanitize text for display in a single-line status.
@@ -48,6 +49,35 @@ function capitalize(value: string): string {
 
 function formatThinkingLevel(level: string): string {
 	return level === "off" ? "Thinking off" : capitalize(level);
+}
+
+function contextUsageColor(percent: number): "error" | "warning" | "footerText" {
+	if (percent > 90) return "error";
+	if (percent > 70) return "warning";
+	return "footerText";
+}
+
+function formatContextMeter(
+	percent: number,
+	contextWindow: number,
+	autoCompactThresholdTokens: number | undefined,
+): string {
+	const filledCells = Math.max(
+		0,
+		Math.min(FOOTER_CONTEXT_BAR_WIDTH, Math.round((percent / 100) * FOOTER_CONTEXT_BAR_WIDTH)),
+	);
+	const markerColumn =
+		autoCompactThresholdTokens === undefined || contextWindow <= 0
+			? undefined
+			: Math.round(
+					(FOOTER_CONTEXT_BAR_WIDTH - 1) * Math.max(0, Math.min(1, autoCompactThresholdTokens / contextWindow)),
+				);
+	const usageColor = contextUsageColor(percent);
+	const cells = Array.from({ length: FOOTER_CONTEXT_BAR_WIDTH }, (_, index) => {
+		if (index === markerColumn) return theme.fg("assistantMessageText", "│");
+		return index < filledCells ? theme.fg(usageColor, "█") : theme.fg("footerText", "░");
+	});
+	return `${theme.fg("footerText", "[")}${cells.join("")}${theme.fg("footerText", "]")}`;
 }
 
 export function formatCwdForFooter(cwd: string, home: string | undefined): string {
@@ -131,16 +161,16 @@ export class FooterComponent implements Component {
 			locationParts.push(sessionName);
 		}
 
-		// Colorize context percentage based on usage
-		let contextPercentStr: string;
 		const contextPercentDisplay = contextPercent === "?" ? "?" : `${contextPercent}%`;
-		if (contextPercentValue > 90) {
-			contextPercentStr = theme.fg("error", contextPercentDisplay);
-		} else if (contextPercentValue > 70) {
-			contextPercentStr = theme.fg("warning", contextPercentDisplay);
-		} else {
-			contextPercentStr = theme.fg("footerText", contextPercentDisplay);
-		}
+		const contextPercentStr = theme.fg(contextUsageColor(contextPercentValue), contextPercentDisplay);
+		const autoCompactThresholdTokens =
+			this.session.autoCompactionEnabled && contextWindow > 0
+				? Math.max(0, contextWindow - this.session.settingsManager.getCompactionReserveTokens(state.model))
+				: undefined;
+		const contextMeter =
+			contextPercent === "?" || contextWindow <= 0
+				? undefined
+				: formatContextMeter(contextPercentValue, contextWindow, autoCompactThresholdTokens);
 
 		const modelParts = [formatModelName(state.model?.id ?? "no-model")];
 		const formattedContextWindow = formatContextWindow(contextWindow);
@@ -153,7 +183,11 @@ export class FooterComponent implements Component {
 			state.model?.reasoning ? formatThinkingLevel(state.thinkingLevel ?? "off") : "Thinking off",
 		);
 		const separator = theme.fg("footerText", " · ");
-		const metadataParts = [modelText, thinkingText, contextPercentStr];
+		const metadataParts = [
+			modelText,
+			thinkingText,
+			contextMeter ? `${contextMeter} ${contextPercentStr}` : contextPercentStr,
+		];
 		if (branch) {
 			metadataParts.push(theme.fg("footerText", branch));
 		}

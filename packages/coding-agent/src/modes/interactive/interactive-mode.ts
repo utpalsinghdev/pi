@@ -2190,12 +2190,7 @@ export class InteractiveMode {
 	}
 
 	private formatWorkingStatusMessage(message: string): string {
-		const usage = this.session.getContextUsage();
-		const tokenSuffix =
-			usage?.tokens === undefined || usage.tokens === null
-				? ""
-				: ` ${theme.fg("footerText", `${formatTokens(usage.tokens)} tokens`)}`;
-		return `${theme.fg("assistantMessageText", message)}${tokenSuffix}`;
+		return theme.fg("assistantMessageText", message);
 	}
 
 	private showWorkingStatusIndicator(): void {
@@ -3170,6 +3165,20 @@ export class InteractiveMode {
 			if (text === "/resume") {
 				this.showSessionSelector();
 				this.editor.setText("");
+				return;
+			}
+			if (text === "/queue" || text.startsWith("/queue ")) {
+				const message = text.slice(6).trim();
+				if (message.length === 0) {
+					this.showWarning("Usage: /queue <message>");
+					return;
+				}
+				this.editor.addToHistory?.(text);
+				this.editor.setText("");
+				await this.session.followUp(message);
+				this.updatePendingMessagesDisplay();
+				this.showStatus("Queued follow-up message");
+				this.ui.requestRender();
 				return;
 			}
 			if (text === "/quit") {
@@ -6402,6 +6411,13 @@ export class InteractiveMode {
 			model: this.session.model,
 			thinkingLevel: this.session.thinkingLevel,
 			contextWindow: this.session.getContextUsage()?.contextWindow ?? this.session.model?.contextWindow ?? 0,
+			autoCompactThresholdTokens: this.session.autoCompactionEnabled
+				? Math.max(
+						0,
+						(this.session.getContextUsage()?.contextWindow ?? this.session.model?.contextWindow ?? 0) -
+							this.settingsManager.getCompactionReserveTokens(this.session.model),
+					)
+				: undefined,
 			categories: CONTEXT_USAGE_CATEGORY_ORDER.map((category) => ({
 				...category,
 				tokens: tokensByCategory.get(category.id) ?? 0,

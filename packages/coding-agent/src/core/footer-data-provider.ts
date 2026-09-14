@@ -106,17 +106,51 @@ function parseGitDiffNumstat(stdout: string): GitDiffStats {
 	return stats;
 }
 
+function parseGitUntrackedFileCount(stdout: string): number {
+	let count = 0;
+	for (const line of stdout.split(/\r?\n/)) {
+		if (line.startsWith("?? ")) {
+			count++;
+		}
+	}
+	return count;
+}
+
+function addUntrackedFileCount(stats: GitDiffStats, untrackedFiles: number): GitDiffStats {
+	return {
+		filesChanged: stats.filesChanged + untrackedFiles,
+		insertions: stats.insertions,
+		deletions: stats.deletions,
+	};
+}
+
+function resolveGitUntrackedFileCountWithGitSync(repoDir: string): number | null {
+	const result = spawnSync(
+		"git",
+		["--no-optional-locks", "status", "--porcelain=v1", "--untracked-files=normal", "--"],
+		{
+			cwd: repoDir,
+			encoding: "utf8",
+			stdio: ["ignore", "pipe", "ignore"],
+		},
+	);
+	return result.status === 0 ? parseGitUntrackedFileCount(result.stdout) : null;
+}
+
 function resolveGitDiffStatsWithGitSync(repoDir: string): GitDiffStats | null {
 	const result = spawnSync("git", ["--no-optional-locks", "diff", "--numstat", "HEAD", "--"], {
 		cwd: repoDir,
 		encoding: "utf8",
 		stdio: ["ignore", "pipe", "ignore"],
 	});
-	return result.status === 0 ? parseGitDiffNumstat(result.stdout) : null;
+	if (result.status !== 0) return null;
+	const stats = parseGitDiffNumstat(result.stdout);
+	const untrackedFiles = resolveGitUntrackedFileCountWithGitSync(repoDir);
+	return untrackedFiles === null ? stats : addUntrackedFileCount(stats, untrackedFiles);
 }
 
 function resolveGitDiffStatsWithGitAsync(repoDir: string): Promise<GitDiffStats | null> {
-	return new Promise((resolvePromise) => {
+	const diffStats = new Promise<GitDiffStats | null>((resolvePromise) => {
 		execFile(
 			"git",
 			["--no-optional-locks", "diff", "--numstat", "HEAD", "--"],
@@ -132,6 +166,27 @@ function resolveGitDiffStatsWithGitAsync(repoDir: string): Promise<GitDiffStats 
 				resolvePromise(parseGitDiffNumstat(stdout));
 			},
 		);
+	});
+	const untrackedFiles = new Promise<number | null>((resolvePromise) => {
+		execFile(
+			"git",
+			["--no-optional-locks", "status", "--porcelain=v1", "--untracked-files=normal", "--"],
+			{
+				cwd: repoDir,
+				encoding: "utf8",
+			},
+			(error: ExecFileException | null, stdout: string) => {
+				if (error) {
+					resolvePromise(null);
+					return;
+				}
+				resolvePromise(parseGitUntrackedFileCount(stdout));
+			},
+		);
+	});
+	return Promise.all([diffStats, untrackedFiles]).then(([stats, count]) => {
+		if (!stats) return null;
+		return count === null ? stats : addUntrackedFileCount(stats, count);
 	});
 }
 

@@ -25,6 +25,8 @@ function createSession(options: {
 	compactionUsage?: AssistantUsage;
 	toolUsage?: AssistantUsage;
 	usingSubscription?: boolean;
+	autoCompactionEnabled?: boolean;
+	reserveTokens?: number;
 }): AgentSession {
 	const usage = options.usage;
 	const entries: Array<Record<string, unknown>> = [];
@@ -79,6 +81,10 @@ function createSession(options: {
 			getCwd: () => "/tmp/project",
 		},
 		getContextUsage: () => ({ contextWindow: 200_000, percent: 12.3 }),
+		autoCompactionEnabled: options.autoCompactionEnabled ?? true,
+		settingsManager: {
+			getCompactionReserveTokens: () => options.reserveTokens ?? 16_384,
+		},
 		modelRuntime: {
 			isUsingSubscription: () => options.usingSubscription ?? false,
 		},
@@ -159,8 +165,22 @@ describe("FooterComponent width handling", () => {
 		);
 		const lines = footer.render(120).map((line) => stripAnsi(line));
 
-		expect(lines[0]).toBe(" GPT-5.5 200k · Max · 12.3% · main · 8 edited · +94 -227 ");
+		expect(lines[0]).toBe(" GPT-5.5 200k · Max · [█░░░░░░░│░] 12.3% · main · 8 edited · +94 -227 ");
 		expect(lines[1]).toBe(" /tmp/project · review ");
+	});
+
+	it("omits the auto-compaction marker when auto compaction is disabled", () => {
+		const session = createSession({
+			sessionName: "",
+			modelId: "gpt-5.5",
+			reasoning: true,
+			thinkingLevel: "medium",
+			autoCompactionEnabled: false,
+		});
+		const footer = new FooterComponent(session, createFooterData(1));
+		const lines = footer.render(120).map((line) => stripAnsi(line));
+
+		expect(lines[0]).toBe(" GPT-5.5 200k · Medium · [█░░░░░░░░░] 12.3% · main ");
 	});
 
 	it("omits diff stats when there are no edited files", () => {
@@ -176,7 +196,7 @@ describe("FooterComponent width handling", () => {
 		);
 		const lines = footer.render(120).map((line) => stripAnsi(line));
 
-		expect(lines[0]).toBe(" GPT-5.5 200k · Max · 12.3% · main ");
+		expect(lines[0]).toBe(" GPT-5.5 200k · Max · [█░░░░░░░│░] 12.3% · main ");
 		expect(lines[1]).toBe(" /tmp/project ");
 	});
 });

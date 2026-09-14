@@ -11,6 +11,7 @@ function createContextUsageData(): ContextUsageDialogData {
 		model: undefined,
 		thinkingLevel: "high",
 		contextWindow: 1_000_000,
+		autoCompactThresholdTokens: 900_000,
 		categories: [
 			{ id: "systemPrompt", label: "System prompt", tokens: 3800, color: "warning" },
 			{ id: "rules", label: "Rules", tokens: 2000, color: "success" },
@@ -36,6 +37,7 @@ describe("ContextUsageDialog", () => {
 		expect(plainText).toContain("System prompt");
 		expect(plainText).toContain("Conversation");
 		expect(plainText).toContain("Tool definitions");
+		expect(plainText).toContain("│");
 		expect(plainText).toContain("Esc to close");
 		expect(lines.every((line) => visibleWidth(line) === 120)).toBe(true);
 	});
