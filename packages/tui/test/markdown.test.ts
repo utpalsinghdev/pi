@@ -323,7 +323,7 @@ describe("Markdown component", () => {
 
 			const lines = markdown.render(24).map((line) => stripAnsi(line).trimEnd());
 
-			assert.deepStrictEqual(lines, ["- ```ts", "    alpha beta gamma", "  delta epsilon zeta", "  ```"]);
+			assert.deepStrictEqual(lines, ["-   alpha beta gamma", "  delta epsilon zeta"]);
 		});
 	});
 
@@ -931,7 +931,7 @@ A=
 			const markdown = new Markdown(source, 0, 0, defaultMarkdownTheme);
 			const lines = markdown.render(80).map((line) => stripAnsi(line).trimEnd());
 
-			assert.deepStrictEqual(lines, ["Escaped $x-y$.", "", "```text", "  $\\mathbb{C}^3$", "```"]);
+			assert.deepStrictEqual(lines, ["Escaped $x-y$.", "", "  $\\mathbb{C}^3$"]);
 		});
 
 		it("allows LaTeX rendering to be disabled", () => {
@@ -1100,16 +1100,16 @@ again, hello world`,
 			const lines = markdown.render(80);
 			const plainLines = lines.map((line) => line.replace(/\x1b\[[0-9;]*m/g, "").trimEnd());
 
-			const closingBackticksIndex = plainLines.indexOf("```");
-			assert.ok(closingBackticksIndex !== -1, "Should have closing backticks");
+			const codeLineIndex = plainLines.indexOf('  const hello = "world";');
+			assert.ok(codeLineIndex !== -1, "Should have rendered code");
 
-			const afterBackticks = plainLines.slice(closingBackticksIndex + 1);
-			const emptyLineCount = afterBackticks.findIndex((line) => line !== "");
+			const afterCode = plainLines.slice(codeLineIndex + 1);
+			const emptyLineCount = afterCode.findIndex((line) => line !== "");
 
 			assert.strictEqual(
 				emptyLineCount,
 				1,
-				`Expected 1 empty line after code block, but found ${emptyLineCount}. Lines after backticks: ${JSON.stringify(afterBackticks.slice(0, 5))}`,
+				`Expected 1 empty line after code block, but found ${emptyLineCount}. Lines after code: ${JSON.stringify(afterCode.slice(0, 5))}`,
 			);
 		});
 
@@ -1128,7 +1128,7 @@ code block
 
 more text`,
 			];
-			const expectedLines = ["hello this is text", "", "```", "  code block", "```", "", "more text"];
+			const expectedLines = ["hello this is text", "", "  code block", "", "more text"];
 
 			for (const text of cases) {
 				const markdown = new Markdown(text, 0, 0, defaultMarkdownTheme);
@@ -1713,6 +1713,30 @@ bar`,
 				"Should render HTML in code blocks",
 			);
 		});
+
+		it("should hide code fence markers in assistant-style list output", () => {
+			const source = `Done.
+
+ Pi repo:
+ - Committed:
+
+ \`\`\`txt
+   fix(tui): hide markdown code fences
+ \`\`\`
+
+ - Branch:
+
+ \`\`\`txt
+   hide-markdown-code-fences
+ \`\`\``;
+			const markdown = new Markdown(source, 0, 0, defaultMarkdownTheme);
+			const plainLines = markdown.render(100).map((line) => stripAnsi(line).trimEnd());
+			const joinedPlain = plainLines.join("\n");
+
+			assert.ok(joinedPlain.includes("fix(tui): hide markdown code fences"));
+			assert.ok(joinedPlain.includes("hide-markdown-code-fences"));
+			assert.ok(!joinedPlain.includes("```"), `Should hide code fence markers: ${JSON.stringify(plainLines)}`);
+		});
 	});
 
 	describe("Streaming code fences", () => {
@@ -1720,27 +1744,27 @@ bar`,
 			const cases = [
 				{
 					input: "```ts\nconst x = 1;\n``",
-					expected: ["```ts", "  const x = 1;", "```"],
+					expected: ["  const x = 1;"],
 				},
 				{
 					input: "```md\nnot a closing fence:\n``\n```",
-					expected: ["```md", "  not a closing fence:", "  ``", "```"],
+					expected: ["  not a closing fence:", "  ``"],
 				},
 				{
 					input: "```ts\n``",
-					expected: ["```ts", "", "```"],
+					expected: [""],
 				},
 				{
 					input: "````\n```",
-					expected: ["```", "", "```"],
+					expected: [""],
 				},
 				{
 					input: "~~~~~\n~~~~",
-					expected: ["```", "", "```"],
+					expected: [""],
 				},
 				{
 					input: "```md\nnot a closing fence:\n``\n```\n\nafter",
-					expected: ["```md", "  not a closing fence:", "  ``", "```", "", "after"],
+					expected: ["  not a closing fence:", "  ``", "", "after"],
 				},
 			];
 
