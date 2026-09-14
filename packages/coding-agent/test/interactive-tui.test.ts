@@ -255,6 +255,14 @@ describe("InteractiveMode frontend clear command", () => {
 		);
 	});
 
+	it("advertises /context as a built-in slash command", () => {
+		expect(BUILTIN_SLASH_COMMANDS).toContainEqual(
+			expect.objectContaining({
+				name: "context",
+			}),
+		);
+	});
+
 	it("clears rendered conversation without touching persisted session data", () => {
 		const context = createFrontendClearContext();
 		context.chatContainer.addChild(new Text("persisted message", 0, 0));

@@ -64,6 +64,7 @@ import {
 	computeCacheWaste,
 	detectCacheMiss,
 } from "../../core/cache-stats.ts";
+import { estimateTokens } from "../../core/compaction/index.ts";
 import { DEFAULT_THINKING_LEVEL, THINKING_LEVEL_OPTIONS } from "../../core/defaults.ts";
 import type {
 	AutocompleteProviderFactory,
@@ -93,6 +94,7 @@ import type { ResourceDiagnostic } from "../../core/resource-loader.ts";
 import { formatMissingSessionCwdPrompt, MissingSessionCwdError } from "../../core/session-cwd.ts";
 import { type SessionEntry, SessionManager, sessionEntryToContextMessages } from "../../core/session-manager.ts";
 import type { FullscreenExitOutput, TuiMode } from "../../core/settings-manager.ts";
+import { formatSkillsForPrompt } from "../../core/skills.ts";
 import { BUILTIN_SLASH_COMMANDS } from "../../core/slash-commands.ts";
 import type { SourceInfo } from "../../core/source-info.ts";
 import { isInstallTelemetryEnabled } from "../../core/telemetry.ts";
@@ -116,6 +118,11 @@ import { AssistantMessageComponent } from "./components/assistant-message.ts";
 import { BashExecutionComponent } from "./components/bash-execution.ts";
 import { BranchSummaryMessageComponent } from "./components/branch-summary-message.ts";
 import { CompactionSummaryMessageComponent } from "./components/compaction-summary-message.ts";
+import {
+	type ContextUsageCategoryId,
+	ContextUsageDialog,
+	type ContextUsageDialogData,
+} from "./components/context-usage-dialog.ts";
 import { CustomEditor } from "./components/custom-editor.ts";
 import { CustomEntryComponent } from "./components/custom-entry.ts";
 import { CustomMessageComponent } from "./components/custom-message.ts";
@@ -253,6 +260,49 @@ function isDeadTerminalError(error: unknown): boolean {
 const ANTHROPIC_SUBSCRIPTION_AUTH_WARNING =
 	"Anthropic subscription auth is active. Third-party harness usage draws from extra usage and is billed per token, not your Claude plan limits. Manage extra usage at https://claude.ai/settings/usage. Disable this warning in /settings.";
 const DEFAULT_PROMPT_PLACEHOLDERS = ["  Ask Pi to do anything"] as const;
+type ContextToolInfo = ReturnType<AgentSession["getAllTools"]>[number];
+
+const CONTEXT_USAGE_CATEGORY_ORDER: Array<{
+	id: ContextUsageCategoryId;
+	label: string;
+	color: ThemeColor;
+}> = [
+	{ id: "systemPrompt", label: "System prompt", color: "warning" },
+	{ id: "rules", label: "Rules", color: "success" },
+	{ id: "mcp", label: "MCP", color: "error" },
+	{ id: "conversation", label: "Conversation", color: "warning" },
+	{ id: "toolDefinitions", label: "Tool definitions", color: "borderAccent" },
+	{ id: "skills", label: "Skills", color: "mdLink" },
+	{ id: "subagents", label: "Subagents", color: "thinkingMax" },
+];
+
+function estimateTextTokens(text: string): number {
+	return Math.ceil(text.length / 4);
+}
+
+function serializeToolForContextUsage(tool: ContextToolInfo): string {
+	return (
+		JSON.stringify({
+			name: tool.name,
+			description: tool.description,
+			parameters: tool.parameters,
+			promptGuidelines: tool.promptGuidelines,
+		}) ?? ""
+	);
+}
+
+function classifyToolContextCategory(tool: ContextToolInfo): ContextUsageCategoryId {
+	const source = tool.sourceInfo.source.toLowerCase();
+	const path = tool.sourceInfo.path.toLowerCase();
+	const name = tool.name.toLowerCase();
+	if (source.includes("subagent") || path.includes("subagent") || name.includes("subagent")) {
+		return "subagents";
+	}
+	if (tool.sourceInfo.source !== "builtin" && tool.sourceInfo.source !== "sdk") {
+		return "mcp";
+	}
+	return "toolDefinitions";
+}
 
 function isAnthropicSubscriptionAuthKey(apiKey: string | undefined): boolean {
 	return typeof apiKey === "string" && apiKey.startsWith("sk-ant-oat");
@@ -3048,6 +3098,11 @@ export class InteractiveMode {
 			if (text === "/hotkeys") {
 				this.handleHotkeysCommand();
 				this.editor.setText("");
+				return;
+			}
+			if (text === "/context") {
+				this.editor.setText("");
+				this.handleContextCommand();
 				return;
 			}
 			if (text === "/fork") {
@@ -6296,6 +6351,76 @@ export class InteractiveMode {
 		this.chatContainer.addChild(new Spacer(1));
 		this.chatContainer.addChild(new Text(info, 1, 0));
 		this.ui.requestRender();
+	}
+
+	private createContextUsageDialogData(): ContextUsageDialogData {
+		const activeToolNames = new Set(this.session.getActiveToolNames());
+		const toolTokensByCategory = new Map<ContextUsageCategoryId, number>([
+			["toolDefinitions", 0],
+			["mcp", 0],
+			["subagents", 0],
+		]);
+
+		for (const tool of this.session.getAllTools()) {
+			if (!activeToolNames.has(tool.name)) continue;
+			const category = classifyToolContextCategory(tool);
+			const current = toolTokensByCategory.get(category) ?? 0;
+			toolTokensByCategory.set(category, current + estimateTextTokens(serializeToolForContextUsage(tool)));
+		}
+
+		const contextFiles = this.session.resourceLoader.getAgentsFiles().agentsFiles;
+		const rulesText = contextFiles
+			.map(
+				({ path: filePath, content }) =>
+					`<project_instructions path="${filePath}">\n${content}\n</project_instructions>`,
+			)
+			.join("\n\n");
+		const rulesTokens = estimateTextTokens(rulesText);
+
+		const skillFileReadTool = (["read", "bash"] as const).find((toolName) => activeToolNames.has(toolName));
+		const skillsText = skillFileReadTool
+			? formatSkillsForPrompt(this.session.resourceLoader.getSkills().skills, skillFileReadTool)
+			: "";
+		const skillsTokens = estimateTextTokens(skillsText);
+		const systemPromptTokens = Math.max(
+			0,
+			estimateTextTokens(this.session.systemPrompt) - rulesTokens - skillsTokens,
+		);
+		const conversationTokens = this.session.messages.reduce((sum, message) => sum + estimateTokens(message), 0);
+
+		const tokensByCategory = new Map<ContextUsageCategoryId, number>([
+			["systemPrompt", systemPromptTokens],
+			["rules", rulesTokens],
+			["mcp", toolTokensByCategory.get("mcp") ?? 0],
+			["conversation", conversationTokens],
+			["toolDefinitions", toolTokensByCategory.get("toolDefinitions") ?? 0],
+			["skills", skillsTokens],
+			["subagents", toolTokensByCategory.get("subagents") ?? 0],
+		]);
+
+		return {
+			model: this.session.model,
+			thinkingLevel: this.session.thinkingLevel,
+			contextWindow: this.session.getContextUsage()?.contextWindow ?? this.session.model?.contextWindow ?? 0,
+			categories: CONTEXT_USAGE_CATEGORY_ORDER.map((category) => ({
+				...category,
+				tokens: tokensByCategory.get(category.id) ?? 0,
+			})),
+		};
+	}
+
+	private handleContextCommand(): void {
+		this.disposeActiveSelector();
+		let handle: OverlayHandle | undefined;
+		const dialog = new ContextUsageDialog(this.createContextUsageDialogData(), () => {
+			handle?.hide();
+		});
+		handle = this.ui.showOverlay(dialog, {
+			anchor: "bottom-center",
+			width: "100%",
+			maxHeight: "100%",
+			margin: 0,
+		});
 	}
 
 	private handleChangelogCommand(): void {
