@@ -252,6 +252,7 @@ function isDeadTerminalError(error: unknown): boolean {
 
 const ANTHROPIC_SUBSCRIPTION_AUTH_WARNING =
 	"Anthropic subscription auth is active. Third-party harness usage draws from extra usage and is billed per token, not your Claude plan limits. Manage extra usage at https://claude.ai/settings/usage. Disable this warning in /settings.";
+const DEFAULT_PROMPT_PLACEHOLDERS = ["  Ask Pi to do anything"] as const;
 
 function isAnthropicSubscriptionAuthKey(apiKey: string | undefined): boolean {
 	return typeof apiKey === "string" && apiKey.startsWith("sk-ant-oat");
@@ -557,8 +558,13 @@ export class InteractiveMode {
 		const autocompleteMaxVisible = this.settingsManager.getAutocompleteMaxVisible();
 		this.defaultEditor = new CustomEditor(this.ui, getEditorTheme(), this.keybindings, {
 			paddingX: editorPaddingX,
+			paddingY: 1,
 			autocompleteMaxVisible,
-			embedWorkingStatus: true,
+			border: false,
+			backgroundStyle: (line) => theme.bg("editorBg", line),
+			placeholder: DEFAULT_PROMPT_PLACEHOLDERS[0],
+			placeholderStyle: (line) => theme.fg("footerText", line),
+			embedWorkingStatus: false,
 		});
 		this.editor = this.defaultEditor;
 		this.editorContainer = new Container();
@@ -1039,7 +1045,7 @@ export class InteractiveMode {
 			const timeout = setTimeout(() => controller.abort(), 15_000);
 			void refreshModelCatalogs(this.session.modelRuntime, controller.signal)
 				.then(() => this.updateAvailableProviderCount())
-				.catch(() => {})
+				.catch(() => { })
 				.finally(() => clearTimeout(timeout));
 		}
 
@@ -2133,17 +2139,25 @@ export class InteractiveMode {
 		}
 	}
 
+	private formatWorkingStatusMessage(message: string): string {
+		const usage = this.session.getContextUsage();
+		const tokenSuffix =
+			usage?.tokens === undefined || usage.tokens === null
+				? ""
+				: ` ${theme.fg("footerText", `${formatTokens(usage.tokens)} tokens`)}`;
+		return `${theme.fg("assistantMessageText", message)}${tokenSuffix}`;
+	}
+
 	private showWorkingStatusIndicator(): void {
-		const colorFn = isWorkingStatusEditor(this.editor)
-			? (text: string) =>
-					(this.editor.borderColor ?? theme.getThinkingBorderColor(this.session.thinkingLevel || "off"))(text)
-			: undefined;
 		this.showStatusIndicator(
 			new WorkingStatusIndicator(
 				this.ui,
-				this.workingMessage ?? this.defaultWorkingMessage,
+				this.formatWorkingStatusMessage(this.workingMessage ?? this.defaultWorkingMessage),
 				this.workingIndicatorOptions,
-				colorFn,
+				{
+					spinnerColorFn: (text) => theme.fg("success", text),
+					messageColorFn: (text) => text,
+				},
 			),
 		);
 	}
@@ -2431,7 +2445,9 @@ export class InteractiveMode {
 			setWorkingMessage: (message) => {
 				this.workingMessage = message;
 				if (this.activeStatusIndicator?.kind === "working") {
-					this.activeStatusIndicator.setMessage(message ?? this.defaultWorkingMessage);
+					this.activeStatusIndicator.setMessage(
+						this.formatWorkingStatusMessage(message ?? this.defaultWorkingMessage),
+					);
 				}
 			},
 			setWorkingVisible: (visible) => this.setWorkingVisible(visible),
@@ -4018,13 +4034,13 @@ export class InteractiveMode {
 		this.isShuttingDown = true;
 		try {
 			this.unregisterSignalHandlers();
-		} catch {}
+		} catch { }
 		try {
 			killTrackedDetachedChildren();
-		} catch {}
+		} catch { }
 		try {
 			this.ui.stop();
-		} catch {}
+		} catch { }
 		console.error(`${APP_NAME} exiting due to uncaughtException:`);
 		console.error(error);
 		process.exit(1);
@@ -4094,11 +4110,11 @@ export class InteractiveMode {
 		// Keep the event loop alive while suspended. Without this, stopping the TUI
 		// can leave Node with no ref'ed handles, causing the process to exit on fg
 		// before the SIGCONT handler gets a chance to restore the terminal.
-		const suspendKeepAlive = setInterval(() => {}, 2 ** 30);
+		const suspendKeepAlive = setInterval(() => { }, 2 ** 30);
 
 		// Ignore SIGINT while suspended so Ctrl+C in the terminal does not
 		// kill the backgrounded process. The handler is removed on resume.
-		const ignoreSigint = () => {};
+		const ignoreSigint = () => { };
 		process.on("SIGINT", ignoreSigint);
 
 		// Set up handler to restore TUI when resumed
@@ -4437,8 +4453,7 @@ export class InteractiveMode {
 			this.compactionQueuedMessages = queuedMessages;
 			this.updatePendingMessagesDisplay();
 			this.showError(
-				`Failed to send queued message${queuedMessages.length > 1 ? "s" : ""}: ${
-					error instanceof Error ? error.message : String(error)
+				`Failed to send queued message${queuedMessages.length > 1 ? "s" : ""}: ${error instanceof Error ? error.message : String(error)
 				}`,
 			);
 		};
@@ -5432,9 +5447,9 @@ export class InteractiveMode {
 			const authStatus = this.session.modelRuntime.getProviderAuthStatus(provider.id);
 			const status = authStatus.configured
 				? {
-						type: this.session.modelRuntime.isUsingOAuth(provider.id) ? ("oauth" as const) : ("api_key" as const),
-						source: authStatus.label ?? authStatus.source,
-					}
+					type: this.session.modelRuntime.isUsingOAuth(provider.id) ? ("oauth" as const) : ("api_key" as const),
+					source: authStatus.label ?? authStatus.source,
+				}
 				: undefined;
 			if ((!authType || authType === "oauth") && provider.auth.oauth) {
 				options.push({
@@ -5933,7 +5948,7 @@ export class InteractiveMode {
 
 	private async showLoginDialog(providerId: string, providerName: string): Promise<void> {
 		const previousModel = this.session.model;
-		const dialog = new LoginDialogComponent(this.ui, providerId, (_success, _message) => {}, providerName);
+		const dialog = new LoginDialogComponent(this.ui, providerId, (_success, _message) => { }, providerName);
 		this.editorContainer.clear();
 		this.editorContainer.addChild(dialog);
 		this.ui.setFocus(dialog);
@@ -6284,9 +6299,9 @@ export class InteractiveMode {
 		const changelogMarkdown =
 			allEntries.length > 0
 				? allEntries
-						.reverse()
-						.map((e) => normalizeChangelogLinks(e.content, e))
-						.join("\n\n")
+					.reverse()
+					.map((e) => normalizeChangelogLinks(e.content, e))
+					.join("\n\n")
 				: "No changelog entries found.";
 
 		this.chatContainer.addChild(new Spacer(1));

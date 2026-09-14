@@ -515,6 +515,21 @@ describe("SettingsManager", () => {
 		});
 	});
 
+	describe("editorPaddingX", () => {
+		it("should default to 1 and persist bounded values", async () => {
+			const manager = SettingsManager.create(projectDir, agentDir);
+
+			expect(manager.getEditorPaddingX()).toBe(1);
+
+			manager.setEditorPaddingX(3);
+			await manager.flush();
+
+			expect(manager.getEditorPaddingX()).toBe(3);
+			const savedSettings = JSON.parse(readFileSync(join(agentDir, "settings.json"), "utf-8"));
+			expect(savedSettings.editorPaddingX).toBe(3);
+		});
+	});
+
 	describe("markdown.mermaid", () => {
 		it("defaults to streaming and persists rendering modes", async () => {
 			const manager = SettingsManager.create(projectDir, agentDir);

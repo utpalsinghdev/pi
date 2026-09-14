@@ -5,6 +5,7 @@ import { join } from "path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 let resolvedBranch = "main";
+let diffNumstat = "";
 
 vi.mock("child_process", () => ({
 	execFile: vi.fn(
@@ -26,12 +27,19 @@ vi.mock("child_process", () => ({
 				);
 				return;
 			}
+			if (args[1] === "diff") {
+				setTimeout(() => callback(null, diffNumstat, ""), 0);
+				return;
+			}
 			setTimeout(() => callback(new Error("unsupported"), "", ""), 0);
 		},
 	),
 	spawnSync: vi.fn((_command: string, args: readonly string[]) => {
 		if (args[1] === "symbolic-ref") {
 			return { status: resolvedBranch ? 0 : 1, stdout: resolvedBranch ? `${resolvedBranch}\n` : "", stderr: "" };
+		}
+		if (args[1] === "diff") {
+			return { status: 0, stdout: diffNumstat, stderr: "" };
 		}
 		return { status: 1, stdout: "", stderr: "" };
 	}),
@@ -101,6 +109,7 @@ describe("FooterDataProvider reftable branch detection", () => {
 		originalCwd = process.cwd();
 		tempDir = mkdtempSync(join(tmpdir(), "footer-data-provider-"));
 		resolvedBranch = "main";
+		diffNumstat = "";
 		vi.mocked(spawnSync).mockClear();
 		vi.mocked(execFile).mockClear();
 	});
@@ -168,6 +177,23 @@ describe("FooterDataProvider reftable branch detection", () => {
 		const provider = new FooterDataProvider(repoDir);
 		try {
 			expect(provider.getGitBranch()).toBe("detached");
+		} finally {
+			provider.dispose();
+		}
+	});
+
+	it("reads edited file count and insertion/deletion totals from git numstat", () => {
+		const repoDir = createPlainRepo(tempDir);
+		process.chdir(repoDir);
+		diffNumstat = "10\t2\tsrc/a.ts\n4\t0\tsrc/b.ts\n-\t-\timage.png\n";
+
+		const provider = new FooterDataProvider(repoDir);
+		try {
+			expect(provider.getGitDiffStats()).toEqual({
+				filesChanged: 3,
+				insertions: 14,
+				deletions: 2,
+			});
 		} finally {
 			provider.dispose();
 		}

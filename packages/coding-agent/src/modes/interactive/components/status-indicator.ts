@@ -36,15 +36,24 @@ export class StatusIndicator extends Loader {
 }
 
 export class WorkingStatusIndicator extends StatusIndicator {
-	constructor(ui: TUI, message: string, indicator?: WorkingIndicatorOptions, colorFn?: (text: string) => string) {
-		super(
-			"working",
-			ui,
-			colorFn ?? ((text) => theme.fg("accent", text)),
-			colorFn ?? ((text) => theme.fg("muted", text)),
-			message,
-			indicator,
-		);
+	constructor(
+		ui: TUI,
+		message: string,
+		indicator?: WorkingIndicatorOptions,
+		style?:
+			| ((text: string) => string)
+			| {
+					spinnerColorFn?: (text: string) => string;
+					messageColorFn?: (text: string) => string;
+			  },
+	) {
+		const spinnerColorFn =
+			typeof style === "function" ? style : (style?.spinnerColorFn ?? ((text) => theme.fg("success", text)));
+		const messageColorFn =
+			typeof style === "function"
+				? style
+				: (style?.messageColorFn ?? ((text) => theme.fg("assistantMessageText", text)));
+		super("working", ui, spinnerColorFn, messageColorFn, message, indicator);
 	}
 }
 

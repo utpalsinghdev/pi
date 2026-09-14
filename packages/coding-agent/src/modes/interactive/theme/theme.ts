@@ -49,6 +49,8 @@ export type ThemeColor =
 	| "muted"
 	| "dim"
 	| "text"
+	| "assistantMessageText"
+	| "footerText"
 	| "thinkingText"
 	| "scrollbarTrack"
 	| "scrollbarThumb"
@@ -90,6 +92,7 @@ export type ThemeColor =
 	| "bashMode";
 
 export type ThemeBg =
+	| "editorBg"
 	| "selectedBg"
 	| "searchMatchBg"
 	| "userMessageBg"
@@ -98,8 +101,14 @@ export type ThemeBg =
 	| "toolSuccessBg"
 	| "toolErrorBg";
 
-type OptionalThemeColor = "scrollbarTrack" | "scrollbarThumb" | "thinkingMax" | "searchMatchText";
-type OptionalThemeBg = "searchMatchBg";
+type OptionalThemeColor =
+	| "assistantMessageText"
+	| "footerText"
+	| "scrollbarTrack"
+	| "scrollbarThumb"
+	| "thinkingMax"
+	| "searchMatchText";
+type OptionalThemeBg = "editorBg" | "searchMatchBg";
 
 type ColorMode = "truecolor" | "256color";
 
@@ -267,6 +276,9 @@ function withThemeColorFallbacks(colors: ThemeJson["colors"]): ThemeJson["colors
 } {
 	return {
 		...colors,
+		assistantMessageText: colors.assistantMessageText ?? colors.text,
+		footerText: colors.footerText ?? colors.dim,
+		editorBg: colors.editorBg ?? colors.userMessageBg,
 		scrollbarTrack: colors.scrollbarTrack ?? colors.muted,
 		scrollbarThumb: colors.scrollbarThumb ?? colors.text,
 		thinkingMax: colors.thinkingMax ?? colors.thinkingXhigh,
@@ -302,6 +314,8 @@ export class Theme {
 		this.fgColors = new Map();
 		const colors = {
 			...fgColors,
+			assistantMessageText: fgColors.assistantMessageText ?? fgColors.text,
+			footerText: fgColors.footerText ?? fgColors.dim,
 			scrollbarTrack: fgColors.scrollbarTrack ?? fgColors.muted,
 			scrollbarThumb: fgColors.scrollbarThumb ?? fgColors.text,
 			thinkingMax: fgColors.thinkingMax ?? fgColors.thinkingXhigh,
@@ -313,6 +327,7 @@ export class Theme {
 		this.bgColors = new Map();
 		const backgrounds = {
 			...bgColors,
+			editorBg: bgColors.editorBg ?? bgColors.userMessageBg,
 			searchMatchBg: bgColors.searchMatchBg ?? bgColors.selectedBg,
 		};
 		for (const [key, value] of Object.entries(backgrounds) as [ThemeBg, string | number][]) {
@@ -531,6 +546,7 @@ function createTheme(themeJson: ThemeJson, mode?: ColorMode, sourcePath?: string
 	const fgColors: Record<ThemeColor, string | number> = {} as Record<ThemeColor, string | number>;
 	const bgColors: Record<ThemeBg, string | number> = {} as Record<ThemeBg, string | number>;
 	const bgColorKeys: Set<string> = new Set([
+		"editorBg",
 		"selectedBg",
 		"searchMatchBg",
 		"userMessageBg",
