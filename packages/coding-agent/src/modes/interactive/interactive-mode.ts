@@ -3167,20 +3167,6 @@ export class InteractiveMode {
 				this.editor.setText("");
 				return;
 			}
-			if (text === "/queue" || text.startsWith("/queue ")) {
-				const message = text.slice(6).trim();
-				if (message.length === 0) {
-					this.showWarning("Usage: /queue <message>");
-					return;
-				}
-				this.editor.addToHistory?.(text);
-				this.editor.setText("");
-				await this.session.followUp(message);
-				this.updatePendingMessagesDisplay();
-				this.showStatus("Queued follow-up message");
-				this.ui.requestRender();
-				return;
-			}
 			if (text === "/quit") {
 				this.editor.setText("");
 				await this.shutdown();
