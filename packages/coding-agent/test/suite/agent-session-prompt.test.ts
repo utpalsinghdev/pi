@@ -9,7 +9,7 @@ import type { ExtensionAPI, InputEvent } from "../../src/core/extensions/index.t
 import type { PromptTemplate } from "../../src/core/prompt-templates.ts";
 import { createSyntheticSourceInfo } from "../../src/core/source-info.ts";
 import { createTestResourceLoader } from "../utilities.ts";
-import { createHarness, getMessageText, type Harness } from "./harness.ts";
+import { createHarness, getMessageText, getUserTexts, type Harness } from "./harness.ts";
 
 describe("AgentSession prompt characterization", () => {
 	const harnesses: Harness[] = [];
@@ -502,5 +502,48 @@ describe("AgentSession prompt characterization", () => {
 		await expect(harness.session.prompt("hi")).rejects.toThrow(
 			`No API key found for ${harness.getModel().provider}.`,
 		);
+	});
+
+	it("keeps persisted history after clearModelContext but omits it from later model calls", async () => {
+		const harness = await createHarness();
+		harnesses.push(harness);
+
+		harness.setResponses([fauxAssistantMessage("old reply")]);
+		await harness.session.prompt("old task");
+
+		expect(getUserTexts(harness)).toEqual(["old task"]);
+		const tokensBeforeClear = harness.session.getContextUsage()?.tokens;
+		expect(tokensBeforeClear).toBeGreaterThan(0);
+
+		harness.session.clearModelContext();
+		expect(getUserTexts(harness)).toEqual(["old task"]);
+		expect(harness.session.modelContextMessages).toEqual([]);
+		expect(harness.session.getContextUsage()?.tokens).toBe(0);
+		expect(harness.session.getContextUsage()?.percent).toBe(0);
+
+		const sentUserTexts: string[] = [];
+		harness.setResponses([
+			(context) => {
+				for (const message of context.messages) {
+					if (message.role === "user") {
+						const content = message.content;
+						const text =
+							typeof content === "string"
+								? content
+								: content
+										.filter((part) => part.type === "text")
+										.map((part) => ("text" in part ? part.text : ""))
+										.join("");
+						sentUserTexts.push(text);
+					}
+				}
+				return fauxAssistantMessage("handoff reply");
+			},
+		]);
+		await harness.session.prompt("continue from this handoff");
+
+		expect(getUserTexts(harness)).toEqual(["old task", "continue from this handoff"]);
+		expect(sentUserTexts).toEqual(["continue from this handoff"]);
+		expect(getMessageText(harness.session.messages[1]!)).toBe("old reply");
 	});
 });

@@ -2,6 +2,7 @@ import { isAbsolute, relative, resolve, sep } from "node:path";
 import { type Component, truncateToWidth } from "@earendil-works/pi-tui";
 import type { AgentSession } from "../../../core/agent-session.ts";
 import { areExperimentalFeaturesEnabled } from "../../../core/experimental.ts";
+import type { ContextUsage } from "../../../core/extensions/types.ts";
 import type { ReadonlyFooterDataProvider } from "../../../core/footer-data-provider.ts";
 import { theme } from "../theme/theme.ts";
 
@@ -109,10 +110,16 @@ function padFooterLine(line: string, width: number): string {
 export class FooterComponent implements Component {
 	private session: AgentSession;
 	private footerData: ReadonlyFooterDataProvider;
+	private getDisplayedContextUsage: () => ContextUsage | undefined;
 
-	constructor(session: AgentSession, footerData: ReadonlyFooterDataProvider) {
+	constructor(
+		session: AgentSession,
+		footerData: ReadonlyFooterDataProvider,
+		getDisplayedContextUsage?: () => ContextUsage | undefined,
+	) {
 		this.session = session;
 		this.footerData = footerData;
+		this.getDisplayedContextUsage = getDisplayedContextUsage ?? (() => this.session.getContextUsage());
 	}
 
 	setSession(session: AgentSession): void {
@@ -140,9 +147,8 @@ export class FooterComponent implements Component {
 	render(width: number): string[] {
 		const state = this.session.state;
 
-		// Calculate context usage from session (handles compaction correctly).
-		// After compaction, tokens are unknown until the next LLM response.
-		const contextUsage = this.session.getContextUsage();
+		// Same totals as /context: last-turn API usage is stale after /clear.
+		const contextUsage = this.getDisplayedContextUsage();
 		const contextWindow = contextUsage?.contextWindow ?? state.model?.contextWindow ?? 0;
 		const contextPercentValue = contextUsage?.percent ?? 0;
 		const contextPercent =

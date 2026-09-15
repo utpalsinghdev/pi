@@ -377,6 +377,9 @@ export class AgentSession {
 	private _baseSystemPromptOptions!: BuildSystemPromptOptions;
 	private _systemPromptOverride?: string;
 
+	// In-memory /clear cutoff. Messages before this index stay persisted but are not sent to the model.
+	private _modelContextStart = 0;
+
 	constructor(config: AgentSessionConfig) {
 		this.agent = config.agent;
 		this.sessionManager = config.sessionManager;
@@ -398,6 +401,7 @@ export class AgentSession {
 		this._unsubscribeAgent = this.agent.subscribe(this._handleAgentEvent);
 		this._installAgentToolHooks();
 		this._installAgentNextTurnRefresh();
+		this._installModelContextCutoff();
 
 		this._buildRuntime({
 			activeToolNames: this._initialActiveToolNames,
@@ -542,7 +546,11 @@ export class AgentSession {
 		if (
 			!model ||
 			model.contextWindow <= 0 ||
-			!shouldCompact(estimateContextTokens(context.messages).tokens, model.contextWindow, settings)
+			!shouldCompact(
+				estimateContextTokens(this._messagesForModel(context.messages)).tokens,
+				model.contextWindow,
+				settings,
+			)
 		) {
 			return context;
 		}
@@ -992,6 +1000,49 @@ export class AgentSession {
 	/** All messages including custom types like BashExecutionMessage */
 	get messages(): AgentMessage[] {
 		return this.agent.state.messages;
+	}
+
+	/** Messages the model and /context should see after `/clear`. Full history remains in `messages`. */
+	get modelContextMessages(): AgentMessage[] {
+		return this._messagesForModel(this.messages);
+	}
+
+	/**
+	 * Stop sending already-stored messages to the model.
+	 * Persisted session history is left unchanged and comes back on resume.
+	 */
+	clearModelContext(): void {
+		this._modelContextStart = this.messages.length;
+	}
+
+	private _messagesForModel(messages: AgentMessage[]): AgentMessage[] {
+		if (this._modelContextStart <= 0) {
+			return messages;
+		}
+		if (this._modelContextStart >= messages.length) {
+			return [];
+		}
+		return messages.slice(this._modelContextStart);
+	}
+
+	private _resetModelContextCutoff(): void {
+		this._modelContextStart = 0;
+	}
+
+	private _isHiddenFromModel(message: AgentMessage): boolean {
+		if (this._modelContextStart <= 0) {
+			return false;
+		}
+		const index = this.messages.indexOf(message);
+		return index !== -1 && index < this._modelContextStart;
+	}
+
+	private _installModelContextCutoff(): void {
+		const previous = this.agent.transformContext;
+		this.agent.transformContext = async (messages, signal) => {
+			const visible = this._messagesForModel(messages);
+			return previous ? await previous(visible, signal) : visible;
+		};
 	}
 
 	/** Current steering mode */
@@ -2054,6 +2105,7 @@ export class AgentSession {
 			const newEntries = this.sessionManager.getEntries();
 			const sessionContext = this.sessionManager.buildSessionContext();
 			this.agent.state.messages = sessionContext.messages;
+			this._resetModelContextCutoff();
 			const estimatedTokensAfter = estimateMessagesTokens(sessionContext.messages);
 
 			// Get the saved compaction entry for the extension event
@@ -2154,6 +2206,7 @@ export class AgentSession {
 	private async _checkCompaction(assistantMessage: AssistantMessage, skipAbortedCheck = true): Promise<boolean> {
 		const settings = this.settingsManager.getCompactionSettings(this.model);
 		if (!settings.enabled) return false;
+		if (this._isHiddenFromModel(assistantMessage)) return false;
 
 		// Skip if message was aborted (user cancelled) - unless skipAbortedCheck is false
 		if (skipAbortedCheck && assistantMessage.stopReason === "aborted") return false;
@@ -2230,7 +2283,7 @@ export class AgentSession {
 		let contextTokens: number;
 		const directContextTokens = assistantMessage.usage ? calculateContextTokens(assistantMessage.usage) : 0;
 		if (assistantMessage.stopReason === "error" || directContextTokens === 0) {
-			const messages = this.agent.state.messages;
+			const messages = this._messagesForModel(this.agent.state.messages);
 			const estimate = estimateContextTokens(messages);
 			// Without provider usage, estimate.tokens is the pure message-size estimate.
 			// Only usage-backed estimates need the stale pre-compaction check.
@@ -2380,6 +2433,7 @@ export class AgentSession {
 			const newEntries = this.sessionManager.getEntries();
 			const sessionContext = this.sessionManager.buildSessionContext();
 			this.agent.state.messages = sessionContext.messages;
+			this._resetModelContextCutoff();
 			const estimatedTokensAfter = estimateMessagesTokens(sessionContext.messages);
 
 			// Get the saved compaction entry for the extension event
@@ -3312,6 +3366,7 @@ export class AgentSession {
 			// Update agent state
 			const sessionContext = this.sessionManager.buildSessionContext();
 			this.agent.state.messages = sessionContext.messages;
+			this._resetModelContextCutoff();
 
 			// Emit session_tree event
 			await this._extensionRunner.emit({
@@ -3415,6 +3470,18 @@ export class AgentSession {
 		const contextWindow = model.contextWindow ?? 0;
 		if (contextWindow <= 0) return undefined;
 
+		if (this._modelContextStart > 0) {
+			let tokens = 0;
+			for (const message of this.modelContextMessages) {
+				tokens += estimateTokens(message);
+			}
+			return {
+				tokens,
+				contextWindow,
+				percent: (tokens / contextWindow) * 100,
+			};
+		}
+
 		// After compaction, the last assistant usage reflects pre-compaction context size.
 		// We can only trust usage from an assistant that responded after the latest compaction.
 		// If no such assistant exists, context token count is unknown until the next LLM response.
@@ -3444,7 +3511,7 @@ export class AgentSession {
 			}
 		}
 
-		const estimate = estimateContextTokens(this.messages);
+		const estimate = estimateContextTokens(this.modelContextMessages);
 		const percent = (estimate.tokens / contextWindow) * 100;
 
 		return {

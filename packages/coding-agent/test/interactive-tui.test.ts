@@ -215,7 +215,12 @@ type CopyCommandPrototype = {
 const copyCommandPrototype = InteractiveMode.prototype as unknown as CopyCommandPrototype;
 
 type FrontendClearCommandContext = {
-	session: { isStreaming: boolean; isCompacting: boolean; isBashRunning: boolean };
+	session: {
+		isStreaming: boolean;
+		isCompacting: boolean;
+		isBashRunning: boolean;
+		clearModelContext: () => void;
+	};
 	chatContainer: Container;
 	pendingTools: Map<string, unknown>;
 	streamingComponent: Component | undefined;
@@ -241,13 +246,15 @@ type WorkingStatusMessagePrototype = {
 const workingStatusMessagePrototype = InteractiveMode.prototype as unknown as WorkingStatusMessagePrototype;
 
 const createFrontendClearContext = (
-	session: FrontendClearCommandContext["session"] = {
+	session: Partial<FrontendClearCommandContext["session"]> = {},
+): FrontendClearCommandContext => ({
+	session: {
 		isStreaming: false,
 		isCompacting: false,
 		isBashRunning: false,
+		clearModelContext: vi.fn(),
+		...session,
 	},
-): FrontendClearCommandContext => ({
-	session,
 	chatContainer: new Container(),
 	pendingTools: new Map<string, unknown>(),
 	streamingComponent: undefined,
@@ -297,8 +304,9 @@ describe("InteractiveMode frontend clear command", () => {
 		expect(context.lastStatusSpacer).toBeUndefined();
 		expect(context.lastStatusText).toBeUndefined();
 		expect(context.showStatus).toHaveBeenCalledWith(
-			"Conversation cleared from screen. Session history is still saved.",
+			"Conversation cleared. History stays saved; the model will only see new messages.",
 		);
+		expect(context.session.clearModelContext).toHaveBeenCalledOnce();
 		expect(context.showWarning).not.toHaveBeenCalled();
 	});
 
@@ -331,6 +339,7 @@ describe("InteractiveMode frontend clear command", () => {
 		expect(context.clearStatusIndicator).not.toHaveBeenCalled();
 		expect(context.showStatus).not.toHaveBeenCalled();
 		expect(context.showWarning).toHaveBeenCalledWith(warning);
+		expect(context.session.clearModelContext).not.toHaveBeenCalled();
 	});
 });
 

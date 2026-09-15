@@ -68,6 +68,7 @@ import { estimateTokens } from "../../core/compaction/index.ts";
 import { DEFAULT_THINKING_LEVEL, THINKING_LEVEL_OPTIONS } from "../../core/defaults.ts";
 import type {
 	AutocompleteProviderFactory,
+	ContextUsage,
 	EditorFactory,
 	ExtensionCommandContext,
 	ExtensionContext,
@@ -474,9 +475,6 @@ export class InteractiveMode {
 	private lastStatusText: Text | undefined = undefined;
 	private managedToolStatusStarted = false;
 
-	// Frontend-only clear marker. Session history stays saved, but /context reflects the visible conversation.
-	private frontendClearedAt: number | undefined = undefined;
-
 	// Streaming message tracking
 	private streamingComponent: AssistantMessageComponent | undefined = undefined;
 	private streamingMessage: AssistantMessage | undefined = undefined;
@@ -623,7 +621,7 @@ export class InteractiveMode {
 		this.editorContainer = new Container();
 		this.editorContainer.addChild(this.editor as Component);
 		this.footerDataProvider = new FooterDataProvider(this.sessionManager.getCwd());
-		this.footer = new FooterComponent(this.session, this.footerDataProvider);
+		this.footer = new FooterComponent(this.session, this.footerDataProvider, () => this.getDisplayedContextUsage());
 		this.footer.setAutoCompactEnabled(this.session.autoCompactionEnabled);
 		this.footerContainer = new Container();
 		this.footerContainer.addChild(this.footer);
@@ -6391,11 +6389,10 @@ export class InteractiveMode {
 			0,
 			estimateTextTokens(this.session.systemPrompt) - rulesTokens - skillsTokens,
 		);
-		const conversationMessages =
-			this.frontendClearedAt === undefined
-				? this.session.messages
-				: this.session.messages.filter((message) => message.timestamp >= this.frontendClearedAt!);
-		const conversationTokens = conversationMessages.reduce((sum, message) => sum + estimateTokens(message), 0);
+		const conversationTokens = this.session.modelContextMessages.reduce(
+			(sum, message) => sum + estimateTokens(message),
+			0,
+		);
 
 		const tokensByCategory = new Map<ContextUsageCategoryId, number>([
 			["systemPrompt", systemPromptTokens],
@@ -6422,6 +6419,20 @@ export class InteractiveMode {
 				...category,
 				tokens: tokensByCategory.get(category.id) ?? 0,
 			})),
+		};
+	}
+
+	private getDisplayedContextUsage(): ContextUsage | undefined {
+		const data = this.createContextUsageDialogData();
+		const contextWindow = data.contextWindow;
+		if (contextWindow <= 0) {
+			return undefined;
+		}
+		const tokens = data.categories.reduce((sum, category) => sum + category.tokens, 0);
+		return {
+			tokens,
+			contextWindow,
+			percent: (tokens / contextWindow) * 100,
 		};
 	}
 
@@ -6598,7 +6609,6 @@ export class InteractiveMode {
 			if (result.cancelled) {
 				return;
 			}
-			this.frontendClearedAt = undefined;
 			this.chatContainer.addChild(new Spacer(1));
 			this.chatContainer.addChild(new Text(`${theme.fg("accent", "✓ New session started")}`, 1, 1));
 			this.ui.requestRender();
@@ -6622,7 +6632,7 @@ export class InteractiveMode {
 		}
 
 		// Frontend-only clear: persisted session entries stay saved and resume/reload can render them again.
-		this.frontendClearedAt = Date.now();
+		this.session.clearModelContext();
 		this.disposeActiveSelector();
 		this.clearStatusIndicator();
 		this.chatContainer.clear();
@@ -6631,7 +6641,7 @@ export class InteractiveMode {
 		this.streamingMessage = undefined;
 		this.lastStatusSpacer = undefined;
 		this.lastStatusText = undefined;
-		this.showStatus("Conversation cleared from screen. Session history is still saved.");
+		this.showStatus("Conversation cleared. History stays saved; the model will only see new messages.");
 	}
 
 	private handleDebugCommand(): void {

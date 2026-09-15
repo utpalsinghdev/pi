@@ -199,4 +199,21 @@ describe("FooterComponent width handling", () => {
 		expect(lines[0]).toBe(" GPT-5.5 200k · Max · [█░░░░░░░│░] 12.3% · main ");
 		expect(lines[1]).toBe(" /tmp/project ");
 	});
+
+	it("uses displayed context usage after /clear instead of stale last-turn usage", () => {
+		const session = createSession({
+			sessionName: "",
+			modelId: "gpt-5.5",
+			reasoning: true,
+			thinkingLevel: "max",
+		});
+		const footer = new FooterComponent(session, createFooterData(1), () => ({
+			tokens: 0,
+			contextWindow: 200_000,
+			percent: 0,
+		}));
+		const lines = footer.render(120).map((line) => stripAnsi(line));
+
+		expect(lines[0]).toBe(" GPT-5.5 200k · Max · [░░░░░░░░│░] 0.0% · main ");
+	});
 });
