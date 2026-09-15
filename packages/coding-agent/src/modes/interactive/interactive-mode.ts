@@ -3070,11 +3070,6 @@ export class InteractiveMode {
 				this.editor.setText("");
 				return;
 			}
-			if (text === "/clear") {
-				this.editor.setText("");
-				this.handleFrontendClearCommand();
-				return;
-			}
 			if (text === "/name" || text.startsWith("/name ")) {
 				this.handleNameCommand(text);
 				this.editor.setText("");
