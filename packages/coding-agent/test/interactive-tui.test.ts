@@ -261,8 +261,8 @@ const createFrontendClearContext = (
 });
 
 describe("InteractiveMode frontend clear command", () => {
-	it("advertises /clear as a built-in slash command", () => {
-		expect(BUILTIN_SLASH_COMMANDS).toContainEqual(
+	it("does not advertise /clear as a built-in so extensions can own it", () => {
+		expect(BUILTIN_SLASH_COMMANDS).not.toContainEqual(
 			expect.objectContaining({
 				name: "clear",
 			}),

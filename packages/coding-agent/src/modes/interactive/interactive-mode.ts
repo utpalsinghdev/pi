@@ -760,14 +760,21 @@ export class InteractiveMode {
 
 		// Convert extension commands to SlashCommand format
 		const builtinCommandNames = new Set(slashCommands.map((c) => c.name));
-		const extensionCommands: SlashCommand[] = this.session.extensionRunner
-			.getRegisteredCommands()
+		const registeredExtensionCommands = this.session.extensionRunner.getRegisteredCommands();
+		const extensionCommands: SlashCommand[] = registeredExtensionCommands
 			.filter((cmd) => !builtinCommandNames.has(cmd.name))
 			.map((cmd) => ({
 				name: cmd.invocationName,
 				description: this.prefixAutocompleteDescription(cmd.description, cmd.sourceInfo),
 				getArgumentCompletions: cmd.getArgumentCompletions,
 			}));
+
+		if (!registeredExtensionCommands.some((cmd) => cmd.name === "clear")) {
+			slashCommands.push({
+				name: "clear",
+				description: "Clear conversation from screen",
+			});
+		}
 
 		// Build skill commands from session.skills (if enabled)
 		this.skillCommands.clear();
@@ -3071,6 +3078,11 @@ export class InteractiveMode {
 			if (text === "/copy") {
 				await this.handleCopyCommand();
 				this.editor.setText("");
+				return;
+			}
+			if (text === "/clear" && !this.isExtensionCommand(text)) {
+				this.editor.setText("");
+				this.handleFrontendClearCommand();
 				return;
 			}
 			if (text === "/name" || text.startsWith("/name ")) {
