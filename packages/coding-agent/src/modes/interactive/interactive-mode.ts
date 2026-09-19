@@ -1667,27 +1667,19 @@ export class InteractiveMode {
 			}
 		}
 
-		// Format collision diagnostics grouped by name
-		for (const [name, collisionList] of collisions) {
-			const first = collisionList[0]?.collision;
-			if (!first) continue;
-			lines.push(theme.fg("warning", `  "${name}" collision:`));
+		// Compact collision summary — avoid a yellow wall when ~/.pi and ~/.agents overlap
+		if (collisions.size > 0) {
+			const skipped = [...collisions.values()].reduce((n, list) => n + list.length, 0);
+			const noun = collisions.size === 1 ? "conflict" : "conflicts";
 			lines.push(
 				theme.fg(
-					"dim",
-					`    ${theme.fg("success", "✓")} ${this.formatPathWithSource(first.winnerPath, this.findSourceInfoForPath(first.winnerPath, sourceInfos))}`,
+					"warning",
+					`  ${collisions.size} skill ${noun} (${skipped} duplicate${skipped === 1 ? "" : "s"} skipped; first copy wins)`,
 				),
 			);
-			for (const d of collisionList) {
-				if (d.collision) {
-					lines.push(
-						theme.fg(
-							"dim",
-							`    ${theme.fg("warning", "✗")} ${this.formatPathWithSource(d.collision.loserPath, this.findSourceInfoForPath(d.collision.loserPath, sourceInfos))} (skipped)`,
-						),
-					);
-				}
-			}
+			const names = [...collisions.keys()].sort((a, b) => a.localeCompare(b));
+			const preview = names.length <= 5 ? names.join(", ") : `${names.slice(0, 5).join(", ")}…`;
+			lines.push(theme.fg("dim", `    ${preview}`));
 		}
 
 		for (const d of otherDiagnostics) {
