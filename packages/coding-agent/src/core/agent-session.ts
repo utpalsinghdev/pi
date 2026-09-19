@@ -384,6 +384,8 @@ export class AgentSession {
 	private _baseSystemPromptOptions!: NormalizedBuildSystemPromptOptions;
 	/** Prompt options after before_agent_start mutations for the active run. */
 	private _runSystemPromptOptions?: NormalizedBuildSystemPromptOptions;
+	/** Mid-session prompt text from extensions (e.g. skill-manager); wins over built options. */
+	private _systemPromptOverride?: string;
 
 	// In-memory /clear cutoff. Messages before this index stay persisted but are not sent to the model.
 	private _modelContextStart = 0;
@@ -963,6 +965,9 @@ export class AgentSession {
 
 	/** Current effective system prompt, including changes not yet sent to the model. */
 	get systemPrompt(): string {
+		if (this._systemPromptOverride !== undefined) {
+			return this._systemPromptOverride;
+		}
 		return buildSystemPrompt(this._runSystemPromptOptions ?? this._baseSystemPromptOptions);
 	}
 
@@ -972,7 +977,6 @@ export class AgentSession {
 	 */
 	setSystemPromptOverride(prompt: string | undefined): void {
 		this._systemPromptOverride = prompt;
-		this.agent.state.systemPrompt = prompt ?? this._baseSystemPrompt;
 	}
 
 	/** Current retry attempt (0 if not retrying) */

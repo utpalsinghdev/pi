@@ -387,7 +387,7 @@ export class ExtensionRunner {
 		this.getSystemPromptFn = contextActions.getSystemPrompt;
 		this.getSystemPromptOptionsFn =
 			contextActions.getSystemPromptOptions ?? (() => normalizeBuildSystemPromptOptions({ cwd: this.cwd }));
-		this.setSystemPromptOverrideFn = contextActions.setSystemPromptOverride;
+		this.setSystemPromptOverrideFn = contextActions.setSystemPromptOverride ?? (() => {});
 
 		// Flush provider registrations queued during extension loading
 		for (const { name, config, extensionPath } of this.runtime.pendingProviderRegistrations) {
