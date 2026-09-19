@@ -966,6 +966,15 @@ export class AgentSession {
 		return buildSystemPrompt(this._runSystemPromptOptions ?? this._baseSystemPromptOptions);
 	}
 
+	/**
+	 * Override the effective system prompt (or restore the base with undefined).
+	 * Used by extension slash commands that reshape the prompt mid-session.
+	 */
+	setSystemPromptOverride(prompt: string | undefined): void {
+		this._systemPromptOverride = prompt;
+		this.agent.state.systemPrompt = prompt ?? this._baseSystemPrompt;
+	}
+
 	/** Current retry attempt (0 if not retrying) */
 	get retryAttempt(): number {
 		return this._retryAttempt;
@@ -2817,6 +2826,7 @@ export class AgentSession {
 				},
 				getSystemPrompt: () => this.systemPrompt,
 				getSystemPromptOptions: () => this._baseSystemPromptOptions,
+				setSystemPromptOverride: (prompt) => this.setSystemPromptOverride(prompt),
 			},
 			{
 				registerProvider: (name, config) => {

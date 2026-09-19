@@ -98,7 +98,6 @@ import type { ResourceDiagnostic } from "../../core/resource-loader.ts";
 import { formatMissingSessionCwdPrompt, MissingSessionCwdError } from "../../core/session-cwd.ts";
 import { type SessionEntry, SessionManager, sessionEntryToContextMessages } from "../../core/session-manager.ts";
 import type { FullscreenExitOutput, TuiMode } from "../../core/settings-manager.ts";
-import { formatSkillsForPrompt } from "../../core/skills.ts";
 import { BUILTIN_SLASH_COMMANDS } from "../../core/slash-commands.ts";
 import type { SourceInfo } from "../../core/source-info.ts";
 import { isInstallTelemetryEnabled } from "../../core/telemetry.ts";
@@ -283,6 +282,14 @@ const CONTEXT_USAGE_CATEGORY_ORDER: Array<{
 
 function estimateTextTokens(text: string): number {
 	return Math.ceil(text.length / 4);
+}
+
+/** Skills block as injected into the system prompt (may be filtered by extensions). */
+function extractSkillsSectionFromSystemPrompt(systemPrompt: string): string {
+	const match = systemPrompt.match(
+		/\n\nThe following skills provide specialized instructions for specific tasks\.[\s\S]*?<\/available_skills>/,
+	);
+	return match?.[0] ?? "";
 }
 
 function serializeToolForContextUsage(tool: ContextToolInfo): string {
@@ -2177,6 +2184,7 @@ export class InteractiveMode {
 				})();
 			},
 			getSystemPrompt: () => this.session.systemPrompt,
+			setSystemPromptOverride: (prompt) => this.session.setSystemPromptOverride(prompt),
 		});
 
 		// Set up the extension shortcut handler on the default editor
@@ -6469,10 +6477,9 @@ export class InteractiveMode {
 			.join("\n\n");
 		const rulesTokens = estimateTextTokens(rulesText);
 
-		const skillFileReadTool = (["read", "bash"] as const).find((toolName) => activeToolNames.has(toolName));
-		const skillsText = skillFileReadTool
-			? formatSkillsForPrompt(this.session.resourceLoader.getSkills().skills, skillFileReadTool)
-			: "";
+		// Measure skills from the effective system prompt so extension filters
+		// (e.g. skill-manager /skill clear) are reflected in /context.
+		const skillsText = extractSkillsSectionFromSystemPrompt(this.session.systemPrompt);
 		const skillsTokens = estimateTextTokens(skillsText);
 		const systemPromptTokens = Math.max(
 			0,
