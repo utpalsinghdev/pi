@@ -346,6 +346,11 @@ export interface ExtensionContext {
 	compact(options?: CompactOptions): void;
 	/** Get the current effective system prompt. */
 	getSystemPrompt(): string;
+	/**
+	 * Override the effective system prompt, or pass undefined to restore the base.
+	 * Used when extensions reshape skills/rules mid-session (also on session_start).
+	 */
+	setSystemPromptOverride(prompt: string | undefined): void;
 }
 
 /**
@@ -1727,6 +1732,7 @@ export interface ExtensionContextActions {
 	compact: (options?: CompactOptions) => void;
 	getSystemPrompt: () => string;
 	getSystemPromptOptions?: () => BuildSystemPromptOptions;
+	setSystemPromptOverride: (prompt: string | undefined) => void;
 }
 
 /**
