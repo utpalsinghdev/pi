@@ -286,10 +286,12 @@ function estimateTextTokens(text: string): number {
 
 /** Skills block as injected into the system prompt (may be filtered by extensions). */
 function extractSkillsSectionFromSystemPrompt(systemPrompt: string): string {
-	const match = systemPrompt.match(
-		/\n\nThe following skills provide specialized instructions for specific tasks\.[\s\S]*?<\/available_skills>/,
+	const section = systemPrompt.match(/<skills>[\s\S]*?<\/skills>/);
+	if (section) return section[0];
+	const legacy = systemPrompt.match(
+		/(?:\n\n)?The following skills provide specialized instructions for specific tasks\.[\s\S]*?<\/available_skills>/,
 	);
-	return match?.[0] ?? "";
+	return legacy?.[0] ?? "";
 }
 
 function serializeToolForContextUsage(tool: ContextToolInfo): string {
