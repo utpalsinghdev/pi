@@ -207,6 +207,10 @@ export interface SessionInfo {
 	messageCount: number;
 	firstMessage: string;
 	allMessagesText: string;
+	/** Estimated token count (chars / 4 heuristic). */
+	tokenCount: number;
+	/** Session file size in bytes. */
+	fileSize: number;
 }
 
 export type ReadonlySessionManager = Pick<
@@ -774,6 +778,8 @@ async function buildSessionInfo(
 					? new Date(headerTime)
 					: stats.mtime;
 
+		const allText = allMessages.join(" ");
+
 		return {
 			path: filePath,
 			id: header.id,
@@ -784,7 +790,9 @@ async function buildSessionInfo(
 			modified,
 			messageCount,
 			firstMessage: firstMessage || "(no messages)",
-			allMessagesText: allMessages.join(" "),
+			allMessagesText: allText,
+			tokenCount: Math.ceil(allText.length / 4),
+			fileSize: stats.size,
 		};
 	} catch {
 		signal?.throwIfAborted();

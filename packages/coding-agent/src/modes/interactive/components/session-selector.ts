@@ -524,6 +524,46 @@ class SessionList implements Component, Focusable {
 			lines.push(scrollInfo);
 		}
 
+		// Stats panel for selected session (mirrors model picker headroom stats)
+		const selectedNode = this.filteredSessions[this.selectedIndex];
+		if (selectedNode) {
+			lines.push("");
+			lines.push(theme.fg("accent", "─".repeat(width)));
+			lines.push(...this.renderSessionStats(selectedNode.session, width));
+			lines.push(theme.fg("accent", "─".repeat(width)));
+		}
+
+		return lines;
+	}
+
+	private formatTokenCount(tokens: number): string {
+		if (tokens >= 1_000_000) return `${(tokens / 1_000_000).toFixed(1)}M`;
+		if (tokens >= 1_000) return `${(tokens / 1_000).toFixed(1)}k`;
+		return String(tokens);
+	}
+
+	private formatFileSize(bytes: number): string {
+		if (bytes >= 1_048_576) return `${(bytes / 1_048_576).toFixed(1)} MB`;
+		if (bytes >= 1_024) return `${(bytes / 1_024).toFixed(1)} KB`;
+		return `${bytes} B`;
+	}
+
+	private renderSessionStats(session: SessionInfo, width: number): string[] {
+		const lines: string[] = [];
+		const label = (text: string) => theme.fg("muted", text);
+		const val = (text: string) => theme.fg("text", text);
+
+		// Row 1: tokens · messages · file size
+		const tokens = `${this.formatTokenCount(session.tokenCount)} tok`;
+		const msgs = `${session.messageCount} msg`;
+		const size = this.formatFileSize(session.fileSize);
+		lines.push(truncateToWidth(`  ${label("tokens: ")}${val(tokens)}   ${label("messages: ")}${val(msgs)}   ${label("size: ")}${val(size)}`, width, "…"));
+
+		// Row 2: created · modified
+		const created = session.created.toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" });
+		const modified = formatSessionDate(session.modified);
+		lines.push(truncateToWidth(`  ${label("created: ")}${val(created)}   ${label("modified: ")}${val(modified)}`, width, "…"));
+
 		return lines;
 	}
 
