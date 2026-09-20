@@ -315,11 +315,13 @@ export class CombinedAutocompleteProvider implements AutocompleteProvider {
 			};
 		}
 
-		if (!options.force && textBeforeCursor.startsWith("/")) {
-			const spaceIndex = textBeforeCursor.indexOf(" ");
+		const commandStart = this.findCommandStart(textBeforeCursor);
+		if (!options.force && commandStart !== -1) {
+			const commandText = textBeforeCursor.slice(commandStart);
+			const spaceIndex = commandText.indexOf(" ");
 
 			if (spaceIndex === -1) {
-				const prefix = textBeforeCursor.slice(1);
+				const prefix = commandText.slice(1);
 				const commandItems = this.commands.map((cmd) => {
 					const name = "name" in cmd ? cmd.name : cmd.value;
 					const hint = "argumentHint" in cmd && cmd.argumentHint ? cmd.argumentHint : undefined;
@@ -346,12 +348,12 @@ export class CombinedAutocompleteProvider implements AutocompleteProvider {
 
 				return {
 					items: filtered,
-					prefix: textBeforeCursor,
+					prefix: commandText,
 				};
 			}
 
-			const commandName = textBeforeCursor.slice(1, spaceIndex);
-			const argumentText = textBeforeCursor.slice(spaceIndex + 1);
+			const commandName = commandText.slice(1, spaceIndex);
+			const argumentText = commandText.slice(spaceIndex + 1);
 
 			const command = this.commands.find((cmd) => {
 				const name = "name" in cmd ? cmd.name : cmd.value;
@@ -403,8 +405,12 @@ export class CombinedAutocompleteProvider implements AutocompleteProvider {
 			isQuotedPrefix && hasTrailingQuoteInItem && hasLeadingQuoteAfterCursor ? afterCursor.slice(1) : afterCursor;
 
 		// Check if we're completing a slash command (prefix starts with "/" but NOT a file path)
-		// Slash commands are at the start of the line and don't contain path separators after the first /
-		const isSlashCommand = prefix.startsWith("/") && beforePrefix.trim() === "" && !prefix.slice(1).includes("/");
+		// Slash commands start the line or follow whitespace, and don't contain path separators after the first /
+		const afterSlashPrefix = prefix.slice(1);
+		const isSlashCommand =
+			prefix.startsWith("/") &&
+			(beforePrefix.trim() === "" || /\s$/.test(beforePrefix)) &&
+			!afterSlashPrefix.includes("/");
 		if (isSlashCommand) {
 			// This is a command name completion
 			const newLine = `${beforePrefix}/${item.value} ${adjustedAfterCursor}`;
@@ -471,6 +477,26 @@ export class CombinedAutocompleteProvider implements AutocompleteProvider {
 			cursorLine,
 			cursorCol: beforePrefix.length + cursorOffset,
 		};
+	}
+
+	/**
+	 * Find the start of a slash command in the text before the cursor.
+	 * Returns the index of the "/" if the line starts with "/" or if there's
+	 * a "/" preceded by whitespace (mid-line command). Returns -1 if the
+	 * "/" looks like a file path (contains another "/" after it).
+	 */
+	private findCommandStart(text: string): number {
+		if (text.startsWith("/")) return 0;
+		// Look for "/" preceded by whitespace (mid-line trigger)
+		for (let i = text.length - 1; i >= 1; i--) {
+			if (text[i] === "/" && /\s/.test(text[i - 1])) {
+				// Reject if there's another "/" after this one (likely a file path)
+				const afterSlash = text.slice(i + 1);
+				if (afterSlash.includes("/")) return -1;
+				return i;
+			}
+		}
+		return -1;
 	}
 
 	// Extract @ prefix for fuzzy file suggestions
