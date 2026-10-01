@@ -41,20 +41,32 @@ export interface ReplicatedStateDelivery {
 }
 
 export interface ReplicatedState<T> {
-	/** Immutable value, or undefined until hydration. Later updates do not mutate previously returned values. */
+	/**
+	 * Contract-immutable value, or undefined until hydration. It is not frozen and may share containers with an
+	 * in-process provider; consumers must not mutate it. Later updates do not mutate previously returned values.
+	 */
 	readonly value: T | undefined;
-	/** Listener values are immutable and may structurally share unchanged data with other revisions. */
+	/**
+	 * Each subscription serializes callbacks, awaiting hydration before updates. Values are immutable and may
+	 * share unchanged revision data. At most 100 deliveries wait behind the running callback; overflow keeps
+	 * only the newest pending value/context/delivery, so update sequences may skip. Failures are reported in
+	 * isolation and delivery continues. Unsubscribe discards pending work without aborting or joining a callback.
+	 */
+	subscribe(listener: (value: T, context: Context, delivery: ReplicatedStateDelivery) => Promise<void>): () => void;
 	subscribe(listener: (value: T, context: Context, delivery: ReplicatedStateDelivery) => void): () => void;
 }
 
 export interface MutableReplicatedState<T extends object> extends ReplicatedState<T> {
 	readonly value: T;
 	/**
-	 * Atomically publish one synchronous copy-on-write mutation. Draft handles are revoked when the callback returns.
-	 * Async callbacks and non-JSON assignments, including `undefined`, throw without changing the value.
+	 * Atomically publish one synchronous overlay mutation. Draft handles are unusable after the callback returns.
+	 * Values placed through the draft are cloned by value; assigning `undefined` to an object property deletes it.
 	 */
 	change(context: Context, mutate: (draft: Draft<T>) => void): void;
-	/** Atomically replace the complete value with a detached immutable JSON snapshot. */
+	/**
+	 * Atomically take immutable ownership of an alias-free strict-JSON replacement.
+	 * The caller must not mutate the transferred root after this call.
+	 */
 	replace(context: Context, value: T): void;
 }
 
@@ -205,6 +217,8 @@ export type ServiceProviderUpdate =
 			readonly sequence: number;
 			readonly ops: readonly Op[];
 	  }
+	/** Full subscription rebaseline after overflow; every state is a root replacement at its new sequence. */
+	| { readonly type: "reset"; readonly snapshot: ServiceSubscriptionSnapshot }
 	| { readonly type: "unavailable" }
 	| { readonly type: "replaced"; readonly snapshot: ServiceInstanceSnapshot }
 	| { readonly type: "spawned"; readonly instance: ServiceInstanceSnapshot }
@@ -219,6 +233,7 @@ export type ServiceCall = {
 };
 
 export interface ServiceSubscription {
+	/** Atomic baseline. Later updates buffer until activation, with a full reset on pending delivery 101. */
 	readonly snapshot: ServiceSubscriptionSnapshot;
 	activate(): void;
 	close(context?: Context): void | Promise<void>;
@@ -263,7 +278,10 @@ export interface FacetEnvironment {
 	provide<T>(service: Service<T>, implementation: NoInfer<T>): void;
 	/** Declare ownership of a multi-instance service and return its deferred spawning capability. */
 	provideMany<T>(service: Service<T>): ServiceSpawner<T>;
-	/** Create initialized mutable state suitable for exposing through a service implementation. */
+	/**
+	 * Create initialized mutable state by taking immutable ownership of an alias-free strict-JSON root.
+	 * The caller must not mutate `initial` after this call.
+	 */
 	replicatedState<T extends object>(initial: T): MutableReplicatedState<T>;
 	/** Give the facet ownership of a resource cleanup function. */
 	own(disposal: () => void | Promise<void>): void;
