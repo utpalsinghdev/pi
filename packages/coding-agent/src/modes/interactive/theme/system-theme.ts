@@ -66,12 +66,15 @@ const TOKEN_FAMILIES: Record<ThemeToken, FamilyName> = {
 	selectedBg: "blue",
 	searchMatchBg: "orange",
 	userMessageBg: "blue",
+	editorBg: "blue",
 	customMessageBg: "violet",
 	toolPendingBg: "neutral",
 	toolSuccessBg: "green",
 	toolErrorBg: "red",
 
 	text: "neutral",
+	assistantMessageText: "neutral",
+	footerText: "neutral",
 	userMessageText: "neutral",
 	customMessageText: "neutral",
 	toolTitle: "neutral",
@@ -257,6 +260,7 @@ const TOOL_PANELS: Surface[] = ["toolPendingBg", "toolSuccessBg", "toolErrorBg"]
 const MESSAGE_PANELS: Surface[] = ["userMessageBg", "customMessageBg"];
 const PANELS: ThemeBg[] = [
 	"userMessageBg",
+	"editorBg",
 	"toolPendingBg",
 	"toolSuccessBg",
 	"toolErrorBg",
@@ -290,6 +294,8 @@ const RULES: Rule[] = [
 	...each(PANELS, ["background"], "panel"),
 	{ token: "text", on: ["background"], level: "text" },
 	{ token: "text", on: ["selectedBg"], level: "textOnPanel" },
+	{ token: "assistantMessageText", on: ["background"], level: "text" },
+	{ token: "footerText", on: ["background"], level: "subtle" },
 	{ token: "userMessageText", on: ["userMessageBg"], level: "textOnPanel" },
 	{ token: "toolTitle", on: TOOL_PANELS, level: "textOnPanel" },
 	...each(["accent", "success", "error", "warning"], ["background", "selectedBg", ...TOOL_PANELS], "readable"),
@@ -341,7 +347,7 @@ const READABLE_FLOOR: Record<ThemeAppearance, Level> = { dark: "readable", light
 const FOREGROUND_LEVEL: Level = "emphasis";
 
 /** Text-level tokens that take the terminal's foreground. */
-const FOREGROUND_TOKENS: ThemeColor[] = ["text", "userMessageText", "toolTitle"];
+const FOREGROUND_TOKENS: ThemeColor[] = ["text", "assistantMessageText", "userMessageText", "toolTitle"];
 
 /** WCAG 2 contrast ratio that body text must reach on the surfaces it is drawn on. */
 const TEXT_MINIMUM_WCAG_CONTRAST = 4.5;
