@@ -68,7 +68,7 @@ import { InteractiveMode, runPrintMode, runRpcMode } from "./modes/index.ts";
 import { initTheme, setThemeJsonValidator, stopThemeWatcher } from "./modes/interactive/theme/theme.ts";
 import { validateThemeJson } from "./modes/interactive/theme/theme-json.ts";
 import { cleanupManagedInstall, handleConfigCommand, handlePackageCommand } from "./package-manager-cli.ts";
-import { isLocalPath, normalizePath, resolvePath } from "./utils/paths.ts";
+import { canonicalizePath, isLocalPath, normalizePath, resolvePath } from "./utils/paths.ts";
 import { cleanupWindowsSelfUpdateQuarantine } from "./utils/windows-self-update.ts";
 
 const EXTENSION_LOAD_FAILURE_HINT = `Hint: Start without extensions using "${APP_NAME} -ne".`;
@@ -791,6 +791,11 @@ export async function main(args: string[], options?: MainOptions) {
 				extensionFactories,
 			},
 		});
+		// Resource trust defaults and ancestor decisions do not grant indexing consent.
+		const persistedTrust = trustStore.getEntry(cwd);
+		if (persistedTrust?.decision === true && persistedTrust.path === canonicalizePath(cwd)) {
+			services.codegraphGrant = { root: cwd };
+		}
 		const { settingsManager, modelRuntime, resourceLoader } = services;
 		const diagnostics: AgentSessionRuntimeDiagnostic[] = [
 			...projectTrustDiagnostics,
@@ -923,7 +928,12 @@ export async function main(args: string[], options?: MainOptions) {
 	}
 	time("createAgentSession");
 
-	if (appMode !== "interactive" && !session.model) {
+	const onDemandMessages = [initialMessage, ...parsed.messages].filter(
+		(message): message is string => message !== undefined,
+	);
+	const onDemandCodegraphOnly =
+		onDemandMessages.length > 0 && onDemandMessages.every((message) => /^\/codegraph(?:\s|$)/.test(message.trim()));
+	if (appMode !== "interactive" && appMode !== "rpc" && !session.model && !onDemandCodegraphOnly) {
 		console.error(chalk.red(formatNoModelsAvailableMessage()));
 		process.exit(1);
 	}

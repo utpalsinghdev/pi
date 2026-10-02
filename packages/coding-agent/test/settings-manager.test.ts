@@ -646,6 +646,47 @@ describe("SettingsManager", () => {
 		});
 	});
 
+	describe("codegraph settings", () => {
+		it("defaults on after authorization and layers trusted project preferences", () => {
+			const defaults = SettingsManager.inMemory().getCodegraphSettings();
+			expect(defaults).toEqual({ enabled: true, watch: true, debounceMs: 250, exclude: [] });
+			writeFileSync(
+				join(projectDir, ".pi", "settings.json"),
+				JSON.stringify({ codegraph: { enabled: false, debounceMs: 500, exclude: ["generated/**"] } }),
+			);
+			const manager = SettingsManager.create(projectDir, agentDir);
+			expect(manager.getCodegraphSettings()).toEqual({
+				enabled: false,
+				watch: true,
+				debounceMs: 500,
+				exclude: ["generated/**"],
+			});
+		});
+
+		it("does not read project CodeGraph settings while project settings are untrusted", () => {
+			writeFileSync(join(projectDir, ".pi", "settings.json"), JSON.stringify({ codegraph: { enabled: false } }));
+			const manager = SettingsManager.create(projectDir, agentDir, { projectTrusted: false });
+			expect(manager.getCodegraphSettings().enabled).toBe(true);
+		});
+
+		it.each(["generated/**", ["generated/**", 17], null])(
+			"rejects malformed exclusion configuration: %j",
+			(exclude) => {
+				writeFileSync(join(projectDir, ".pi", "settings.json"), JSON.stringify({ codegraph: { exclude } }));
+				const manager = SettingsManager.create(projectDir, agentDir);
+				expect(() => manager.getCodegraphSettings()).toThrow(
+					"Invalid codegraph.exclude: expected an array of strings",
+				);
+			},
+		);
+
+		it("falls back from invalid debounce values", () => {
+			expect(SettingsManager.inMemory({ codegraph: { debounceMs: -1 } }).getCodegraphSettings().debounceMs).toBe(
+				250,
+			);
+		});
+	});
+
 	describe("defaultTools", () => {
 		it("loads global defaults and lets project settings replace them", () => {
 			writeFileSync(join(agentDir, "settings.json"), JSON.stringify({ defaultTools: ["read", "bash"] }));

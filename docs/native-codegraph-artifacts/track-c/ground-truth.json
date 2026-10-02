@@ -1,0 +1,120 @@
+{
+  "schemaVersion": 1,
+  "frozenBeforeCandidateRuns": true,
+  "corpus": "fixtures",
+  "languageClaims": ["TypeScript", "Python"],
+  "limitations": [
+    "Symbol and edge expectations are based on explicit declarations, imports, and direct calls in these fixture files; dynamic dispatch and runtime behavior are not expected.",
+    "Names such as normalize are deliberately ambiguous and must not be resolved by choosing one candidate silently.",
+    "Literal strings and comments are grep/find/read tasks, not graph-symbol retrieval tasks.",
+    "The .txt file is intentionally unsupported by the graph parser and must use source-text fallback.",
+    "Lexical graph search is not embedding-based semantic search; paraphrases may require targeted source fallback."
+  ],
+  "tasks": [
+    {
+      "id": "search-create-order",
+      "operation": "search",
+      "request": {"operation": "search", "query": "createOrder"},
+      "expected": {"files": ["src/orders.ts"], "symbols": ["createOrder"], "edges": []},
+      "evidence": ["src/orders.ts:export async function createOrder"]
+    },
+    {
+      "id": "symbol-storage-file",
+      "operation": "symbols",
+      "request": {"operation": "symbols", "file": "src/storage.ts"},
+      "expected": {"files": ["src/storage.ts"], "symbols": ["writeRecord"], "edges": []},
+      "evidence": ["src/storage.ts:export async function writeRecord"]
+    },
+    {
+      "id": "callers-create-order",
+      "operation": "callers",
+      "request": {"operation": "callers", "name": "createOrder"},
+      "expected": {"files": ["src/routes.ts"], "symbols": ["postOrder", "createOrder"], "edges": ["postOrder->createOrder"]},
+      "evidence": ["src/routes.ts:export function postOrder", "src/routes.ts:return createOrder(order)", "src/orders.ts:export async function createOrder"]
+    },
+    {
+      "id": "callees-create-order",
+      "operation": "callees",
+      "request": {"operation": "callees", "name": "createOrder"},
+      "expected": {"files": ["src/orders.ts", "src/notifier.ts", "src/persistence.ts"], "symbols": ["createOrder", "validateOrder", "persistOrder", "notifyOrder"], "edges": ["createOrder->validateOrder", "createOrder->persistOrder", "createOrder->notifyOrder"]},
+      "evidence": ["src/orders.ts:validateOrder(order)", "src/orders.ts:await persistOrder(order)", "src/orders.ts:notifyOrder(order.id)", "src/persistence.ts:export async function persistOrder", "src/notifier.ts:export function notifyOrder"]
+    },
+    {
+      "id": "dependencies-orders-imports",
+      "operation": "dependencies",
+      "request": {"operation": "dependencies", "file": "src/orders.ts", "direction": "imports"},
+      "expected": {"files": ["src/orders.ts", "src/notifier.ts", "src/persistence.ts"], "symbols": [], "edges": ["orders.ts->notifier.ts", "orders.ts->persistence.ts"]},
+      "evidence": ["src/orders.ts:from \"./persistence.ts\"", "src/orders.ts:from \"./notifier.ts\""]
+    },
+    {
+      "id": "dependencies-persistence-dependents",
+      "operation": "dependencies",
+      "request": {"operation": "dependencies", "file": "src/persistence.ts", "direction": "dependents"},
+      "expected": {"files": ["src/orders.ts", "src/persistence.ts"], "symbols": [], "edges": ["orders.ts->persistence.ts"]},
+      "evidence": ["src/orders.ts:from \"./persistence.ts\""]
+    },
+    {
+      "id": "impact-validation",
+      "operation": "impact",
+      "request": {"operation": "impact", "name": "validateOrder", "depth": 2},
+      "expected": {"files": ["src/orders.ts", "src/routes.ts"], "symbols": ["validateOrder", "createOrder", "postOrder"], "edges": ["createOrder->validateOrder", "postOrder->createOrder"]},
+      "evidence": ["src/orders.ts:validateOrder(order)", "src/orders.ts:export async function createOrder", "src/routes.ts:export function postOrder", "src/routes.ts:return createOrder(order)"]
+    },
+    {
+      "id": "context-order-write-path",
+      "operation": "context",
+      "request": {"operation": "context", "query": "createOrder persistOrder writeRecord", "includeCode": true},
+      "expected": {"files": ["src/orders.ts", "src/persistence.ts", "src/storage.ts"], "symbols": ["createOrder", "persistOrder", "writeRecord"], "edges": ["createOrder->persistOrder", "persistOrder->writeRecord"]},
+      "evidence": ["src/orders.ts:export async function createOrder", "src/orders.ts:await persistOrder(order)", "src/persistence.ts:export async function persistOrder", "src/persistence.ts:await writeRecord(\"orders\", order.id, order)", "src/storage.ts:export async function writeRecord"]
+    },
+    {
+      "id": "ambiguous-normalize",
+      "operation": "callers",
+      "request": {"operation": "callers", "name": "normalize"},
+      "expected": {"files": ["src/legacy.ts", "src/text.ts"], "symbols": ["normalize"], "edges": []},
+      "evidence": ["src/legacy.ts:export function normalize", "src/text.ts:export function normalize"]
+    },
+    {
+      "id": "missing-symbol",
+      "operation": "search",
+      "request": {"operation": "search", "query": "symbolThatDoesNotExist_98317"},
+      "expected": {"files": [], "symbols": [], "edges": []},
+      "evidence": ["absent:symbolThatDoesNotExist_98317"]
+    },
+    {
+      "id": "literal-comment-fallback",
+      "operation": "search",
+      "request": {"operation": "search", "query": "MAGIC_LITERAL_42"},
+      "expected": {"files": ["src/literals.ts", "unsupported/notes.txt"], "symbols": [], "edges": []},
+      "evidence": ["src/literals.ts:MAGIC_LITERAL_42", "unsupported/notes.txt:MAGIC_LITERAL_42"]
+    },
+    {
+      "id": "literal-string-fallback",
+      "operation": "search",
+      "request": {"operation": "search", "query": "needle-in-string-731"},
+      "expected": {"files": ["src/literals.ts", "unsupported/notes.txt"], "symbols": [], "edges": []},
+      "evidence": ["src/literals.ts:needle-in-string-731", "unsupported/notes.txt:needle-in-string-731"]
+    },
+    {
+      "id": "python-callers",
+      "operation": "callers",
+      "request": {"operation": "callers", "name": "normalize_job"},
+      "expected": {"files": ["python/worker.py"], "symbols": ["dispatch_job", "normalize_job"], "edges": ["dispatch_job->normalize_job"]},
+      "evidence": ["python/worker.py:normalized = normalize_job(job_name)"]
+    },
+    {
+      "id": "python-callees",
+      "operation": "callees",
+      "request": {"operation": "callees", "name": "dispatch_job"},
+      "expected": {"files": ["python/worker.py"], "symbols": ["dispatch_job", "normalize_job", "publish_job"], "edges": ["dispatch_job->normalize_job", "dispatch_job->publish_job"]},
+      "evidence": ["python/worker.py:def dispatch_job", "python/worker.py:normalized = normalize_job(job_name)", "python/worker.py:return publish_job(normalized)", "python/worker.py:def normalize_job", "python/worker.py:def publish_job"]
+    },
+    {
+      "id": "paraphrase-fallback",
+      "operation": "context",
+      "request": {"operation": "context", "query": "where are orders checked before being saved"},
+      "expected": {"files": ["src/orders.ts", "src/persistence.ts"], "symbols": ["validateOrder", "createOrder", "persistOrder"], "edges": ["createOrder->validateOrder", "createOrder->persistOrder"]},
+      "evidence": ["src/orders.ts:if (!validateOrder(order)) return false", "src/orders.ts:await persistOrder(order)"]
+    }
+  ]
+}

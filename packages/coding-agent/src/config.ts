@@ -511,6 +511,14 @@ export function getCodemodeWorkerSpecifier(): string | URL | undefined {
 	return resolveCodemodeWorkerSpecifier(runtime, import.meta.url);
 }
 
+/** Resolve the private Node child entry that owns CodeGraph and its parser assets. */
+export function getCodegraphWorkerSpecifier(): string | URL | undefined {
+	if (isBunRuntime || isBunBinary) return undefined;
+	return isBundledNode
+		? new URL("./codegraph-worker.js", import.meta.url)
+		: new URL("./core/codegraph/worker.mjs", import.meta.url);
+}
+
 // =============================================================================
 // App Config (from package.json piConfig)
 // =============================================================================

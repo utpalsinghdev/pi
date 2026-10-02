@@ -1,9 +1,11 @@
 import type { AssistantMessage, ImageContent } from "@earendil-works/pi-ai";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import type { AgentSessionEvent } from "../src/core/agent-session.ts";
 import type { SessionShutdownEvent } from "../src/index.ts";
 import { runPrintMode } from "../src/modes/print-mode.ts";
 
 type EmitEvent = SessionShutdownEvent;
+type SessionListener = (event: AgentSessionEvent) => void;
 
 type FakeExtensionRunner = {
 	hasHandlers: (eventType: string) => boolean;
@@ -16,7 +18,7 @@ type FakeSession = {
 	state: { messages: AssistantMessage[] };
 	extensionRunner: FakeExtensionRunner;
 	bindExtensions: ReturnType<typeof vi.fn>;
-	subscribe: ReturnType<typeof vi.fn>;
+	subscribe: ReturnType<typeof vi.fn<(listener: SessionListener) => () => void>>;
 	prompt: ReturnType<typeof vi.fn>;
 	reload: ReturnType<typeof vi.fn>;
 };
@@ -55,13 +57,17 @@ function createAssistantMessage(options?: {
 	};
 }
 
-function createRuntimeHost(assistantMessage: AssistantMessage): FakeRuntimeHost {
+function createRuntimeHost(
+	assistantMessage: AssistantMessage,
+	onPrompt?: (message: string, emit: (event: AgentSessionEvent) => void) => void,
+): FakeRuntimeHost {
 	const extensionRunner: FakeExtensionRunner = {
 		hasHandlers: (eventType: string) => eventType === "session_shutdown",
 		emit: vi.fn(async () => {}),
 	};
 
 	const state = { messages: [assistantMessage] };
+	let sessionListener: SessionListener | undefined;
 
 	const session: FakeSession = {
 		sessionManager: { getHeader: () => undefined },
@@ -69,8 +75,15 @@ function createRuntimeHost(assistantMessage: AssistantMessage): FakeRuntimeHost 
 		state,
 		extensionRunner,
 		bindExtensions: vi.fn(async () => {}),
-		subscribe: vi.fn(() => () => {}),
-		prompt: vi.fn(async () => {}),
+		subscribe: vi.fn((listener: SessionListener) => {
+			sessionListener = listener;
+			return () => {
+				sessionListener = undefined;
+			};
+		}),
+		prompt: vi.fn(async (message: string) => {
+			onPrompt?.(message, (event) => sessionListener?.(event));
+		}),
 		reload: vi.fn(async () => {}),
 	};
 
@@ -121,6 +134,32 @@ describe("runPrintMode", () => {
 		expect(session.prompt).toHaveBeenCalledWith("hello");
 		expect(session.extensionRunner.emit).toHaveBeenCalledTimes(1);
 		expect(session.extensionRunner.emit).toHaveBeenCalledWith({ type: "session_shutdown", reason: "quit" });
+	});
+
+	it("prints on-demand CodeGraph output without echoing prior assistant text", async () => {
+		const runtimeHost = createRuntimeHost(createAssistantMessage({ text: "old answer" }), (message, emit) => {
+			if (message === "/codegraph status") {
+				emit({ type: "codegraph_result", command: "status", message: "CodeGraph ready" });
+			}
+		});
+		const writes: string[] = [];
+		vi.spyOn(process.stdout, "write").mockImplementation(((...args: Parameters<typeof process.stdout.write>) => {
+			const [chunk, encodingOrCallback, callback] = args;
+			writes.push(String(chunk));
+			const done = typeof encodingOrCallback === "function" ? encodingOrCallback : callback;
+			done?.();
+			return true;
+		}) as typeof process.stdout.write);
+
+		const exitCode = await runPrintMode(runtimeHost as unknown as Parameters<typeof runPrintMode>[0], {
+			mode: "text",
+			initialMessage: "/codegraph status",
+		});
+
+		expect(exitCode).toBe(0);
+		expect(runtimeHost.session.prompt).toHaveBeenCalledOnce();
+		expect(writes.join("")).toContain("CodeGraph ready");
+		expect(writes.join("")).not.toContain("old answer");
 	});
 
 	it("emits session_shutdown and returns non-zero on assistant error", async () => {

@@ -7,6 +7,8 @@ import { resolvePath } from "../utils/paths.ts";
 import { AgentSession } from "./agent-session.ts";
 import { formatNoModelsAvailableMessage } from "./auth-guidance.ts";
 import { CacheWarmer } from "./cache-warmer.ts";
+import { acquireCodegraph } from "./codegraph/controller.ts";
+import type { CodegraphGrant } from "./codegraph/types.ts";
 import { DEFAULT_THINKING_LEVEL } from "./defaults.ts";
 import type { ExtensionRunner, LoadExtensionsResult, SessionStartEvent, ToolDefinition } from "./extensions/index.ts";
 import { convertToLlm } from "./messages.ts";
@@ -74,6 +76,8 @@ export interface CreateAgentSessionOptions {
 	tools?: string[];
 	/** Optional denylist of tool names to disable. Applies after `tools` when both are provided. */
 	excludeTools?: string[];
+	/** Explicit consent to index this exact effective cwd. */
+	codegraph?: CodegraphGrant;
 	/** Custom tools to register (in addition to built-in tools). */
 	customTools?: ToolDefinition[];
 
@@ -102,6 +106,7 @@ export interface CreateAgentSessionResult {
 // Re-exports
 
 export * from "./agent-session-runtime.ts";
+export type { CodegraphGrant, CodegraphSettings } from "./codegraph/types.ts";
 export type {
 	ExtensionAPI,
 	ExtensionCommandContext,
@@ -182,6 +187,7 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 	const modelRuntime = options.modelRuntime ?? (await ModelRuntime.create({ authPath, modelsPath }));
 
 	const settingsManager = options.settingsManager ?? SettingsManager.create(cwd, agentDir);
+	const getCodegraphSettings = () => settingsManager.getCodegraphSettings();
 	const sessionManager = options.sessionManager ?? SessionManager.create(cwd, getDefaultSessionDir(cwd, agentDir));
 
 	if (!resourceLoader) {
@@ -265,9 +271,6 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 	const allowedToolNames = options.tools ?? (options.noTools === "all" ? [] : undefined);
 	const excludedToolNames = options.excludeTools;
 	const excludedToolNameSet = excludedToolNames ? new Set(excludedToolNames) : undefined;
-	const initialActiveToolNames = (
-		options.tools ?? (options.noTools ? [] : (configuredDefaultToolNames ?? DEFAULT_TOOL_NAMES))
-	).filter((name) => !excludedToolNameSet?.has(name));
 
 	// Create convertToLlm wrapper that filters images if blockImages is enabled (defense-in-depth)
 	const convertToLlmWithBlockImages = (messages: AgentMessage[]): Message[] => {
@@ -434,23 +437,57 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 		sessionManager.appendThinkingLevelChange(thinkingLevel);
 	}
 
-	const session = new AgentSession({
-		agent,
-		sessionManager,
-		settingsManager,
-		cwd,
-		scopedModels: options.scopedModels,
-		resourceLoader,
-		customTools: options.customTools,
-		modelRuntime,
-		cacheWarmer,
-		initialActiveToolNames,
-		usesDefaultTools: options.tools === undefined && !options.noTools,
-		allowedToolNames,
-		excludedToolNames,
-		extensionRunnerRef,
-		sessionStartEvent: options.sessionStartEvent,
-	});
+	const codegraph = acquireCodegraph({ cwd, grant: options.codegraph, settings: getCodegraphSettings() });
+	const codegraphGrantFactory = (grant: CodegraphGrant) =>
+		acquireCodegraph({ cwd, grant, settings: getCodegraphSettings() });
+	const defaultActiveNames = [...(configuredDefaultToolNames ?? DEFAULT_TOOL_NAMES)];
+	const rawDefaultToolNames = settingsManager.getSettings().defaultTools;
+	const defaultToolsAreModifiersOnly =
+		Array.isArray(rawDefaultToolNames) &&
+		rawDefaultToolNames.length > 0 &&
+		rawDefaultToolNames.every((name) => typeof name === "string" && /^[+-]/.test(name));
+	const inheritsDefaultTools =
+		configuredDefaultToolNames === undefined ||
+		(defaultToolsAreModifiersOnly && !rawDefaultToolNames?.includes("-codebase"));
+	if (
+		inheritsDefaultTools &&
+		codegraph.status().eligible &&
+		getCodegraphSettings().enabled &&
+		!defaultActiveNames.includes("codebase")
+	) {
+		defaultActiveNames.push("codebase");
+	}
+	const initialActiveToolNames = (options.tools ?? (options.noTools ? [] : defaultActiveNames)).filter(
+		(name) => !excludedToolNameSet?.has(name),
+	);
+
+	let session: AgentSession;
+	try {
+		session = new AgentSession({
+			agent,
+			sessionManager,
+			settingsManager,
+			cwd,
+			scopedModels: options.scopedModels,
+			resourceLoader,
+			customTools: options.customTools,
+			modelRuntime,
+			codegraph,
+			codegraphGrant: options.codegraph,
+			codegraphGrantFactory,
+			cacheWarmer,
+			initialActiveToolNames,
+			usesDefaultTools: options.tools === undefined && !options.noTools,
+			allowedToolNames,
+			excludedToolNames,
+			extensionRunnerRef,
+			sessionStartEvent: options.sessionStartEvent,
+		});
+	} catch (error) {
+		codegraph.dispose();
+		void codegraph.disposed.catch(() => {});
+		throw error;
+	}
 
 	const extensionsResult = resourceLoader.getExtensions();
 

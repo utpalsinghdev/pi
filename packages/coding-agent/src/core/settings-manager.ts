@@ -13,6 +13,7 @@ import lockfile from "proper-lockfile";
 import { CONFIG_DIR_NAME, getAgentDir } from "../config.ts";
 import { normalizePath, resolvePath } from "../utils/paths.ts";
 import { stripBom } from "../utils/text.ts";
+import type { CodegraphSettings } from "./codegraph/types.ts";
 import { DEFAULT_HTTP_IDLE_TIMEOUT_MS, parseHttpIdleTimeoutMs } from "./http-dispatcher.ts";
 
 export interface CompactionModelOverride {
@@ -174,6 +175,7 @@ export interface Settings {
 	markdown?: MarkdownSettings;
 	warnings?: WarningSettings;
 	codemode?: CodemodeSettings;
+	codegraph?: CodegraphSettings;
 	sessionDir?: string; // Custom session storage directory (same format as --session-dir CLI flag)
 	httpProxy?: string; // Proxy URL applied as HTTP_PROXY and HTTPS_PROXY for Pi-managed HTTP clients
 	httpIdleTimeoutMs?: number; // HTTP header/body idle timeout in milliseconds; 0 disables it
@@ -1425,6 +1427,29 @@ export class SettingsManager {
 
 	getEnabledModels(): string[] | undefined {
 		return this.settings.enabledModels;
+	}
+
+	getCodegraphSettings(): Required<CodegraphSettings> {
+		const settings = this.settings.codegraph;
+		if (
+			settings?.exclude !== undefined &&
+			(!Array.isArray(settings.exclude) || settings.exclude.some((pattern) => typeof pattern !== "string"))
+		) {
+			throw new Error("Invalid codegraph.exclude: expected an array of strings");
+		}
+		const debounceMs = settings?.debounceMs;
+		return {
+			enabled: typeof settings?.enabled === "boolean" ? settings.enabled : true,
+			watch: typeof settings?.watch === "boolean" ? settings.watch : true,
+			debounceMs:
+				typeof debounceMs === "number" &&
+				Number.isSafeInteger(debounceMs) &&
+				debounceMs >= 100 &&
+				debounceMs <= 5_000
+					? debounceMs
+					: 250,
+			exclude: settings?.exclude ?? [],
+		};
 	}
 
 	/** The resolved `defaultTools` selection, or undefined when no settings layer sets it. */

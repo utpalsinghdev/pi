@@ -1,6 +1,7 @@
 node_modules/
 dist/
 .artifacts/
+.codegraph/
 *.log
 .DS_Store
 *.tsbuildinfo
