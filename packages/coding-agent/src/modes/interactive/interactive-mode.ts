@@ -774,6 +774,15 @@ export class InteractiveMode {
 			...(command.argumentHint && { argumentHint: command.argumentHint }),
 		}));
 
+		const codegraphCommand = slashCommands.find((command) => command.name === "codegraph");
+		if (codegraphCommand) {
+			codegraphCommand.getArgumentCompletions = (prefix: string): AutocompleteItem[] | null => {
+				const commands = ["status", "refresh"];
+				const matching = commands.filter((command) => command.startsWith(prefix));
+				return matching.length > 0 ? matching.map((command) => ({ value: command, label: command })) : null;
+			};
+		}
+
 		const modelCommand = slashCommands.find((command) => command.name === "model");
 		if (modelCommand) {
 			modelCommand.getArgumentCompletions = (prefix: string): AutocompleteItem[] | null => {
@@ -3264,6 +3273,12 @@ export class InteractiveMode {
 				this.handleContextCommand();
 				return;
 			}
+			if (text === "/codegraph" || text.startsWith("/codegraph ")) {
+				this.editor.addToHistory?.(text);
+				this.editor.setText("");
+				await this.session.prompt(text);
+				return;
+			}
 			if (text === "/fork") {
 				this.showUserMessageSelector();
 				this.editor.setText("");
@@ -3593,6 +3608,19 @@ export class InteractiveMode {
 
 			case "bash_execution_update":
 				// The bash execution callback handles TUI output rendering.
+				break;
+
+			case "codegraph_result":
+				this.addMessageToChat(
+					createCustomMessage(
+						"codegraph",
+						[{ type: "text", text: event.message }],
+						true,
+						event.status,
+						new Date().toISOString(),
+					),
+				);
+				this.ui.requestRender();
 				break;
 
 			case "tool_execution_start": {

@@ -9,6 +9,7 @@ export {
 	createBashToolDefinition,
 	createLocalBashOperations,
 } from "./bash.ts";
+export { createCodebaseTool, createCodebaseToolDefinition } from "./codebase.ts";
 export {
 	createEditTool,
 	createEditToolDefinition,

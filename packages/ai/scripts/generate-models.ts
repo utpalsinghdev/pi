@@ -5,6 +5,7 @@ import { dirname, join, resolve } from "path";
 import { fileURLToPath } from "url";
 import { getEffortThinkingLevelMap, type ModelsDevReasoningOption } from "./models-dev-reasoning-options.ts";
 import { buildOpenRouterCatalog, type OpenRouterCatalog, type OpenRouterModelListItem } from "./openrouter-catalog.ts";
+import { fetchOpenRouterModelList } from "./openrouter-model-list.ts";
 import {
 	CLOUDFLARE_AI_GATEWAY_ANTHROPIC_BASE_URL,
 	CLOUDFLARE_AI_GATEWAY_COMPAT_BASE_URL,
@@ -1296,21 +1297,13 @@ async function fetchNvidiaNimModelIds(): Promise<Map<string, string>> {
 	}
 }
 
-async function fetchOpenRouterList(query: string): Promise<OpenRouterModelListItem[]> {
-	const response = await fetch(`https://openrouter.ai/api/v1/models${query}`);
-	if (!response.ok) throw new Error(`OpenRouter API returned ${response.status}`);
-	const data = (await response.json()) as { data?: OpenRouterModelListItem[] };
-	return data.data ?? [];
-}
-
 async function fetchOpenRouterModels(): Promise<OpenRouterCatalog> {
 	try {
 		console.log("Fetching models from OpenRouter API...");
 		const [listed, imageListed, decisionListed] = await Promise.all([
-			fetchOpenRouterList(""),
-			fetchOpenRouterList("?output_modalities=image"),
-			fetchOpenRouterList("?output_modalities=decisions"),
-		]);
+			fetchOpenRouterModelList(""),
+			fetchOpenRouterModelList("?output_modalities=image"),
+			fetchOpenRouterModelList("?output_modalities=decisions"),		]);
 		const catalog = buildOpenRouterCatalog(listed, imageListed, decisionListed);
 		console.log(
 			`Fetched ${catalog.chat.length} tool-capable, ${catalog.images.length} image, and ${catalog.classifiers.length} classifier models from OpenRouter`,

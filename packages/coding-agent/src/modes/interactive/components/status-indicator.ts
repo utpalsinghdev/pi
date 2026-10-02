@@ -48,11 +48,9 @@ export class WorkingStatusIndicator extends StatusIndicator {
 			  },
 	) {
 		const spinnerColorFn =
-			typeof style === "function" ? style : (style?.spinnerColorFn ?? ((text) => theme.fg("success", text)));
+			typeof style === "function" ? style : (style?.spinnerColorFn ?? ((text) => theme.fg("accent", text)));
 		const messageColorFn =
-			typeof style === "function"
-				? style
-				: (style?.messageColorFn ?? ((text) => theme.fg("assistantMessageText", text)));
+			typeof style === "function" ? style : (style?.messageColorFn ?? ((text) => theme.fg("muted", text)));
 		super("working", ui, spinnerColorFn, messageColorFn, message, indicator);
 	}
 }

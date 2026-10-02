@@ -37,6 +37,7 @@ export async function runPrintMode(runtimeHost: AgentSessionRuntime, options: Pr
 	let unsubscribe: (() => void) | undefined;
 	let unsubscribeBackpressure: (() => void) | undefined;
 	let disposed = false;
+	let lastInputWasCodegraphCommand = false;
 	const signalCleanupHandlers: Array<() => void> = [];
 
 	const disposeRuntime = async (): Promise<void> => {
@@ -108,6 +109,9 @@ export async function runPrintMode(runtimeHost: AgentSessionRuntime, options: Pr
 		unsubscribe = session.subscribe((event) => {
 			if (mode === "json") {
 				writeRawStdout(`${JSON.stringify(toJsonEvent(event))}\n`);
+			} else if (event.type === "codegraph_result") {
+				lastInputWasCodegraphCommand = true;
+				writeRawStdout(`${event.message}\n`);
 			}
 		});
 		unsubscribeBackpressure =
@@ -129,14 +133,16 @@ export async function runPrintMode(runtimeHost: AgentSessionRuntime, options: Pr
 		await rebindSession();
 
 		if (initialMessage) {
+			lastInputWasCodegraphCommand = /^\/codegraph(?:\s|$)/.test(initialMessage);
 			await session.prompt(initialMessage, { images: initialImages });
 		}
 
 		for (const message of messages) {
+			lastInputWasCodegraphCommand = /^\/codegraph(?:\s|$)/.test(message);
 			await session.prompt(message);
 		}
 
-		if (mode === "text") {
+		if (mode === "text" && !lastInputWasCodegraphCommand) {
 			const state = session.state;
 			const lastMessage = state.messages[state.messages.length - 1];
 

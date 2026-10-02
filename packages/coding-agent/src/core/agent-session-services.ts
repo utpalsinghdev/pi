@@ -3,6 +3,7 @@ import type { ThinkingLevel } from "@earendil-works/pi-agent-core";
 import type { Model } from "@earendil-works/pi-ai";
 import { getAgentDir } from "../config.ts";
 import { resolvePath } from "../utils/paths.ts";
+import type { CodegraphGrant } from "./codegraph/types.ts";
 import type { SessionStartEvent, ToolDefinition } from "./extensions/index.ts";
 import { ModelRuntime } from "./model-runtime.ts";
 import {
@@ -37,6 +38,7 @@ export interface AgentSessionRuntimeDiagnostic {
 export interface CreateAgentSessionServicesOptions {
 	cwd: string;
 	agentDir?: string;
+	codegraphGrant?: CodegraphGrant;
 	settingsManager?: SettingsManager;
 	modelRuntime?: ModelRuntime;
 	modelRuntimeSignal?: AbortSignal;
@@ -73,6 +75,7 @@ export interface CreateAgentSessionFromServicesOptions {
 export interface AgentSessionServices {
 	cwd: string;
 	agentDir: string;
+	codegraphGrant?: CodegraphGrant;
 	modelRuntime: ModelRuntime;
 	settingsManager: SettingsManager;
 	resourceLoader: ResourceLoader;
@@ -197,6 +200,7 @@ export async function createAgentSessionServices(
 	return {
 		cwd,
 		agentDir,
+		codegraphGrant: options.codegraphGrant,
 		modelRuntime,
 		settingsManager,
 		resourceLoader,
@@ -228,6 +232,7 @@ export async function createAgentSessionFromServices(
 		excludeTools: options.excludeTools,
 		noTools: options.noTools,
 		customTools: options.customTools,
+		codegraph: options.services.codegraphGrant,
 		sessionStartEvent: options.sessionStartEvent,
 	});
 }

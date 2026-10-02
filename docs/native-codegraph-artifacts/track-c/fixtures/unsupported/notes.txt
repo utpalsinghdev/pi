@@ -1,0 +1,2 @@
+Literal text corpus case: MAGIC_LITERAL_42 and needle-in-string-731.
+This file has no supported language parser and must remain a grep fallback case.

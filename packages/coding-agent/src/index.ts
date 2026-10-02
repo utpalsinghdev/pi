@@ -247,6 +247,8 @@ export {
 	AgentSessionRuntime,
 	type AgentSessionRuntimeDiagnostic,
 	type AgentSessionServices,
+	type CodegraphGrant,
+	type CodegraphSettings,
 	type CreateAgentSessionFromServicesOptions,
 	type CreateAgentSessionOptions,
 	type CreateAgentSessionResult,

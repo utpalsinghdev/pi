@@ -1,12 +1,13 @@
 #!/usr/bin/env node
 
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join, relative, resolve } from "node:path";
+import { dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { getPublicWorkspacePackages } from "./release-packages.mjs";
 
+const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const codingAgentName = "@earendil-works/pi-coding-agent";
 const developmentPackages = new Set(["pi-client", "pi-protocol", "pi-server"].map((name) => `@earendil-works/${name}`));
 
@@ -75,7 +76,7 @@ function checkInstalledPackages(nodeModules, seen = new Set()) {
 	}
 }
 
-export function smokeTestCodingAgentConsumer(directory, runtime = process.execPath) {
+export function smokeTestCodingAgentConsumer(directory, runtime = process.execPath, { codegraph = false } = {}) {
 	checkInstalledPackages(join(directory, "node_modules"));
 	const packageDir = join(directory, "node_modules", codingAgentName);
 	const manifest = JSON.parse(readFileSync(join(packageDir, "package.json"), "utf8"));
@@ -83,6 +84,7 @@ export function smokeTestCodingAgentConsumer(directory, runtime = process.execPa
 		if (existsSync(join(packageDir, path))) throw new Error(`Published package contains development-only code: ${path}`);
 	}
 	const home = mkdtempSync(join(directory, "smoke-home-"));
+	const project = codegraph ? mkdtempSync(join(directory, "codegraph-project-")) : undefined;
 	const entry = join(directory, "smoke-sdk.mjs");
 	const env = {
 		PATH: process.env.PATH,
@@ -95,11 +97,13 @@ export function smokeTestCodingAgentConsumer(directory, runtime = process.execPa
 		PI_CODING_AGENT_DIR: join(home, ".pi", "agent"),
 		PI_OFFLINE: "1",
 		PI_TELEMETRY: "0",
+		...(project ? { PI_CODEGRAPH_SMOKE_PROJECT: project } : {}),
 	};
 	for (const name of ["SystemRoot", "SYSTEMROOT", "WINDIR", "COMSPEC", "PATHEXT"]) {
 		if (process.env[name]) env[name] = process.env[name];
 	}
 	try {
+		if (project) cpSync(join(repositoryRoot, "docs/native-codegraph-artifacts/track-c/fixtures"), project, { recursive: true });
 		writeFileSync(entry, `import assert from "node:assert/strict";
 import { createAgentSession, SessionManager, ModelRuntime } from "${codingAgentName}";
 assert.equal(typeof createAgentSession, "function");
@@ -111,6 +115,45 @@ for (const name of ["pi-client", "pi-protocol", "pi-server"]) {
 for (const subpath of ["/client", "/experimental/plugin"]) {
   assert.throws(() => import.meta.resolve("${codingAgentName}" + subpath), /not exported|not defined|Cannot find|cannot find/);
 }
+${codegraph ? `const cwd = process.env.PI_CODEGRAPH_SMOKE_PROJECT;
+const { session } = await createAgentSession({
+  cwd,
+  agentDir: process.env.PI_CODING_AGENT_DIR,
+  codegraph: { root: cwd },
+  sessionManager: SessionManager.inMemory(cwd),
+});
+let providerCalls = 0;
+session.modelRuntime.streamSimple = () => {
+  providerCalls++;
+  throw new Error("unexpected provider request in offline CodeGraph smoke");
+};
+const events = [];
+const unsubscribe = session.subscribe((event) => events.push(event));
+try {
+  const tool = session.agent.state.tools.find((item) => item.name === "codebase");
+  assert.ok(tool, "authorized SDK session must expose installed native codebase tool");
+  const deadline = Date.now() + 120000;
+  let result;
+  while (Date.now() < deadline) {
+    const outcome = await tool.execute("installed-codegraph-smoke", { operation: "search", query: "createOrder" });
+    const payload = outcome.content.find((part) => part.type === "text");
+    assert.ok(payload && payload.type === "text", "codebase tool must return serialized text result");
+    result = JSON.parse(payload.text);
+    if (result.status === "ok") break;
+    assert.equal(result.status, "not_ready", JSON.stringify(result));
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
+  assert.ok(result?.status === "ok", "native tool did not reach indexed readiness before deadline");
+  assert.ok(result.nodes.some((node) => node.name === "createOrder"), JSON.stringify(result));
+  await session.prompt("/codegraph status");
+  await session.prompt("/codegraph refresh");
+  assert.ok(events.some((event) => event.type === "codegraph_result" && event.command === "status"));
+  assert.ok(events.some((event) => event.type === "codegraph_result" && event.command === "refresh"));
+  assert.equal(providerCalls, 0, "status and refresh must not issue provider requests");
+} finally {
+  unsubscribe();
+  await session.disposeAsync();
+}` : ""}
 `);
 		run(runtime, [entry], { cwd: directory, env, timeout: 30_000 });
 		for (const cli of new Set([manifest.bin.pi, "dist/cli.js"])) {
@@ -119,6 +162,7 @@ for (const subpath of ["/client", "/experimental/plugin"]) {
 		}
 	} finally {
 		rmSync(entry, { force: true });
+		if (project) rmSync(project, { recursive: true, force: true });
 		rmSync(home, { recursive: true, force: true });
 	}
 	console.log(`Coding-agent SDK and CLI consumer smoke tests passed (${runtime}).`);
@@ -131,7 +175,7 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
 		const tarballs = packReleasePackages(getPublicWorkspacePackages(), join(root, "tarballs"));
 		const directory = join(root, "consumer");
 		installCodingAgentConsumer(directory, tarballs);
-		smokeTestCodingAgentConsumer(directory);
+		smokeTestCodingAgentConsumer(directory, process.execPath, { codegraph: true });
 	} finally {
 		rmSync(root, { recursive: true, force: true });
 	}

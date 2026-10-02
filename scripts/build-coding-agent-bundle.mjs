@@ -187,6 +187,7 @@ const lazyEntryPoints = {
 	anthropic: join(aiDistDir, "auth", "oauth", "anthropic.js"),
 	"bedrock-converse-stream": join(aiDistDir, "api", "bedrock-converse-stream.js"),
 	"codemode-worker": join(codingAgentDistDir, "extensions", "codemode", "worker.js"),
+	"codegraph-worker": join(codingAgentDir, "src", "core", "codegraph", "worker.mjs"),
 	"github-copilot": join(aiDistDir, "auth", "oauth", "github-copilot.js"),
 	"image-resize-worker": join(codingAgentDistDir, "utils", "image-resize-worker.js"),
 	"kimi-coding": join(aiDistDir, "auth", "oauth", "kimi-coding.js"),

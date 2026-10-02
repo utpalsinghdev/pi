@@ -58,12 +58,14 @@ import {
 import { getThemeByName, theme } from "../modes/interactive/theme/theme.ts";
 import { stripFrontmatter } from "../utils/frontmatter.ts";
 import { processImage } from "../utils/image-process.ts";
+import { canonicalizePath } from "../utils/paths.ts";
 import { sleep } from "../utils/sleep.ts";
 import { normalizeToolResultImages } from "../utils/tool-result-images.ts";
 import { formatNoApiKeyFoundMessage, formatNoModelSelectedMessage } from "./auth-guidance.ts";
 import { type BashResult, executeBashWithOperations } from "./bash-executor.ts";
 import { generateBugReportSummary } from "./bug-report.ts";
 import type { CacheWarmer, CacheWarmingStatus } from "./cache-warmer.ts";
+import type { CodegraphGrant, CodegraphService, CodegraphStatus } from "./codegraph/types.ts";
 import {
 	type CompactionPreparation,
 	type CompactionResult,
@@ -140,6 +142,7 @@ import {
 	normalizeBuildSystemPromptOptions,
 } from "./system-prompt.ts";
 import { type BashOperations, createLocalBashOperations } from "./tools/bash.ts";
+import { createCodebaseToolDefinition } from "./tools/codebase.ts";
 import { createAllToolDefinitions } from "./tools/index.ts";
 import { createToolDefinitionFromAgentTool } from "./tools/tool-definition-wrapper.ts";
 import { addUsageToTotals, combineUsage, createUsageTotals } from "./usage-totals.ts";
@@ -228,7 +231,13 @@ export type AgentSessionEvent =
 			reason: "manual" | "threshold" | "overflow";
 	  }
 	| { type: "summarization_retry_finished" }
-	| { type: "bash_execution_update"; id?: string; delta: string };
+	| { type: "bash_execution_update"; id?: string; delta: string }
+	| {
+			type: "codegraph_result";
+			command: "status" | "refresh" | "usage";
+			status?: CodegraphStatus;
+			message: string;
+	  };
 
 /** Listener function for agent session events */
 export type AgentSessionEventListener = (event: AgentSessionEvent) => void;
@@ -280,6 +289,12 @@ export interface AgentSessionConfig {
 	extensionRunnerRef?: { current?: ExtensionRunner };
 	/** Session start event metadata emitted when extensions bind to this runtime. */
 	sessionStartEvent?: SessionStartEvent;
+	/** Session-owned native code graph service. */
+	codegraph?: CodegraphService;
+	/** Exact root-scoped indexing consent, when already granted by the caller. */
+	codegraphGrant?: CodegraphGrant;
+	/** Creates a session-scoped service after interactive confirmation or settings reload. */
+	codegraphGrantFactory?: (grant: CodegraphGrant) => CodegraphService;
 }
 
 export interface ExtensionBindings {
@@ -353,6 +368,24 @@ function estimateMessagesTokens(messages: AgentMessage[]): number {
 		tokens += estimateTokens(message);
 	}
 	return tokens;
+}
+
+function formatCodegraphStatus(status: CodegraphStatus): string {
+	const lines = [
+		`CodeGraph ${status.state}${status.enabled ? " enabled" : " disabled"}${status.eligible ? "" : " (ineligible)"}`,
+		`Root: ${status.root}`,
+		`Storage: ${status.storagePath}`,
+		`Freshness: ${status.freshness}${status.partial ? " (partial)" : ""}; watcher: ${status.watcher}`,
+		`Files: ${status.counts.files}; nodes: ${status.counts.nodes}; edges: ${status.counts.edges}; ` +
+			`pending: ${status.pendingChanges}`,
+	];
+	if (status.phase) lines.push(`Phase: ${status.phase.name} ${status.phase.current}/${status.phase.total}`);
+	if (status.revision?.lastIndexedAt !== null && status.revision?.lastIndexedAt !== undefined) {
+		lines.push(`Last indexed: ${new Date(status.revision.lastIndexedAt).toISOString()}`);
+	}
+	if (status.lastError) lines.push(`Last error: ${status.lastError}`);
+	if (status.reason) lines.push(`Reason: ${status.reason}`);
+	return lines.join("\n");
 }
 
 // ============================================================================
@@ -437,6 +470,10 @@ export class AgentSession {
 	private _extensionErrorUnsubscriber?: () => void;
 
 	private _modelRuntime: ModelRuntime;
+	private _codegraph?: CodegraphService;
+	private _codegraphGrant?: CodegraphGrant;
+	private _codegraphGrantFactory?: (grant: CodegraphGrant) => CodegraphService;
+	private _codegraphDisposed?: Promise<void>;
 	private _cacheWarmer?: Pick<CacheWarmer, "cancel" | "status" | "onAgentSettled" | "onModeChanged" | "onWarmed">;
 
 	// Tool registry for extension getTools/setTools
@@ -467,13 +504,16 @@ export class AgentSession {
 		this._customTools = config.customTools ?? [];
 		this._cwd = config.cwd;
 		this._modelRuntime = config.modelRuntime;
+		this._codegraph = config.codegraph;
+		this._codegraphGrant = config.codegraphGrant;
+		this._codegraphGrantFactory = config.codegraphGrantFactory;
 		this._cacheWarmer = config.cacheWarmer;
 		if (this._cacheWarmer) {
 			this._cacheWarmer.onWarmed = (entry) => this._emit({ type: "entry_appended", entry });
 		}
 		this._extensionRunnerRef = config.extensionRunnerRef;
 		this._initialActiveToolNames = config.initialActiveToolNames;
-		this._usesDefaultTools = config.usesDefaultTools ?? false;
+		this._usesDefaultTools = config.usesDefaultTools ?? config.initialActiveToolNames === undefined;
 		this._allowedToolNames = config.allowedToolNames ? new Set(config.allowedToolNames) : undefined;
 		this._excludedToolNames = config.excludedToolNames ? new Set(config.excludedToolNames) : undefined;
 		this._baseToolsOverride = config.baseToolsOverride;
@@ -1376,11 +1416,24 @@ export class AgentSession {
 		);
 		this._disconnectFromAgent();
 		this._eventListeners = [];
+		const codegraph = this._codegraph;
+		this._codegraph = undefined;
+		if (codegraph) {
+			codegraph.dispose();
+			this._codegraphDisposed = codegraph.disposed;
+			void this._codegraphDisposed.catch(() => {});
+		}
 		if (this._cacheWarmer) {
 			this._cacheWarmer.onWarmed = undefined;
 			this._cacheWarmer.cancel();
 		}
 		cleanupSessionResources(this.sessionId);
+	}
+
+	/** Dispose session and wait for session-owned CodeGraph work to drain. */
+	async disposeAsync(): Promise<void> {
+		this.dispose();
+		await this._codegraphDisposed;
 	}
 
 	// =========================================================================
@@ -1962,6 +2015,11 @@ export class AgentSession {
 		// Handle extension commands first (execute immediately, even during streaming)
 		// Extension commands manage their own LLM interaction via pi.sendMessage()
 		if (expandPromptTemplates && text.startsWith("/")) {
+			const nativeCommandHandled = await this._tryExecuteCodegraphCommand(text);
+			if (nativeCommandHandled) {
+				preflightResult?.("handled");
+				return;
+			}
 			const handled = await this._tryExecuteExtensionCommand(text);
 			if (handled) {
 				// Extension command executed, no prompt to send
@@ -2095,6 +2153,75 @@ export class AgentSession {
 
 		preflightResult?.("started");
 		await this._runAgentPrompt(messages);
+	}
+
+	private async _tryExecuteCodegraphCommand(text: string): Promise<boolean> {
+		const match = /^\/codegraph(?:\s+(.*))?$/.exec(text);
+		if (!match) return false;
+		const argument = match[1]?.trim() ?? "";
+		if (argument !== "" && argument !== "status" && argument !== "refresh") {
+			this._emit({
+				type: "codegraph_result",
+				command: "usage",
+				status: this._codegraph?.status(),
+				message: "Usage: /codegraph [status|refresh]",
+			});
+			return true;
+		}
+		if (!this._codegraph) {
+			this._emit({
+				type: "codegraph_result",
+				command: argument === "refresh" ? "refresh" : "status",
+				message: "CodeGraph service unavailable.",
+			});
+			return true;
+		}
+
+		const command = argument === "refresh" ? "refresh" : "status";
+		let service = this._codegraph;
+		try {
+			const currentStatus = service.status();
+			if (
+				command === "refresh" &&
+				currentStatus.reason === "Explicit root-scoped CodeGraph grant required" &&
+				currentStatus.root === canonicalizePath(this._cwd) &&
+				this.settingsManager.getCodegraphSettings().enabled &&
+				this._extensionMode === "tui" &&
+				this._extensionUIContext &&
+				this._codegraphGrantFactory
+			) {
+				const confirmed = await this._extensionUIContext.confirm(
+					"Allow CodeGraph indexing?",
+					`Index files under ${currentStatus.root} and write graph data to ${currentStatus.storagePath}?`,
+				);
+				if (confirmed) {
+					const previous = service;
+					this._codegraphGrant = { root: currentStatus.root };
+					service = this._codegraphGrantFactory(this._codegraphGrant);
+					this._codegraph = service;
+					previous.dispose();
+					void previous.disposed.catch(() => {});
+					if (this._usesDefaultTools && this._getDefaultToolNames().includes("codebase")) {
+						this.setActiveToolsByName([...this.getActiveToolNames(), "codebase"]);
+					}
+				}
+			}
+			const status = command === "refresh" ? await service.refresh() : service.status();
+			const message =
+				command === "refresh" && status.reason === "Explicit root-scoped CodeGraph grant required"
+					? `Authorization required: ${status.reason}.\n${formatCodegraphStatus(status)}`
+					: formatCodegraphStatus(status);
+			this._emit({ type: "codegraph_result", command, status, message });
+		} catch (error) {
+			const status = service.status();
+			this._emit({
+				type: "codegraph_result",
+				command,
+				status,
+				message: `CodeGraph ${command} failed: ${error instanceof Error ? error.message : String(error)}`,
+			});
+		}
+		return true;
 	}
 
 	/**
@@ -3594,6 +3721,24 @@ export class AgentSession {
 		return this._isDeclarable(name) && this._toolDefinitions.get(name)?.definition.defaultActive !== false;
 	}
 
+	private _getDefaultToolNames(): string[] {
+		const configured = this.settingsManager.getDefaultTools();
+		const raw = this.settingsManager.getSettings().defaultTools;
+		const modifierOnly =
+			Array.isArray(raw) && raw.length > 0 && raw.every((entry) => typeof entry === "string" && /^[+-]/.test(entry));
+		const inheritsDefaults = configured === undefined || (modifierOnly && !raw?.includes("-codebase"));
+		const names = [...(configured ?? DEFAULT_TOOL_NAMES)];
+		if (
+			inheritsDefaults &&
+			this.settingsManager.getCodegraphSettings().enabled &&
+			this._codegraph?.status().eligible &&
+			!names.includes("codebase")
+		) {
+			names.push("codebase");
+		}
+		return names;
+	}
+
 	private _buildRuntime(options: {
 		activeToolNames?: string[];
 		flagValues?: Map<string, boolean | string>;
@@ -3602,6 +3747,7 @@ export class AgentSession {
 		const autoResizeImages = this.settingsManager.getImageAutoResize();
 		const shellCommandPrefix = this.settingsManager.getShellCommandPrefix();
 		const shellPath = this.settingsManager.getShellPath();
+		const initialCodegraph = this._codegraph;
 		const baseToolDefinitions = this._baseToolsOverride
 			? Object.fromEntries(
 					Object.entries(this._baseToolsOverride).map(([name, tool]) => [
@@ -3609,10 +3755,15 @@ export class AgentSession {
 						createToolDefinitionFromAgentTool(tool),
 					]),
 				)
-			: createAllToolDefinitions(this._cwd, {
-					read: { autoResizeImages },
-					bash: { commandPrefix: shellCommandPrefix, shellPath },
-				});
+			: {
+					...createAllToolDefinitions(this._cwd, {
+						read: { autoResizeImages },
+						bash: { commandPrefix: shellCommandPrefix, shellPath },
+					}),
+					...(initialCodegraph && this.settingsManager.getCodegraphSettings().enabled
+						? { codebase: createCodebaseToolDefinition(() => this._codegraph ?? initialCodegraph) }
+						: {}),
+				};
 
 		this._baseToolDefinitions = new Map(
 			Object.entries(baseToolDefinitions).map(([name, tool]) => [name, tool as ToolDefinition]),
@@ -3640,7 +3791,7 @@ export class AgentSession {
 
 		const defaultActiveToolNames = this._baseToolsOverride
 			? Object.keys(this._baseToolsOverride)
-			: ["read", "bash", "edit", "write"];
+			: this._getDefaultToolNames();
 		const baseActiveToolNames = options.activeToolNames ?? defaultActiveToolNames;
 		this._refreshToolRegistry({
 			activeToolNames: baseActiveToolNames,
@@ -3653,19 +3804,21 @@ export class AgentSession {
 		const previousFlagValues = oldRunner.getFlagValues();
 		await emitSessionShutdownEvent(oldRunner, { type: "session_shutdown", reason: "reload" });
 		oldRunner.invalidate();
-		const previousDefaultTools = new Set(
-			this._usesDefaultTools ? (this.settingsManager.getDefaultTools() ?? DEFAULT_TOOL_NAMES) : [],
-		);
+		const previousDefaultTools = new Set(this._usesDefaultTools ? this._getDefaultToolNames() : []);
 		await this.settingsManager.reload();
+		if (this._codegraphGrant && this._codegraphGrantFactory) {
+			const previous = this._codegraph;
+			previous?.dispose();
+			if (previous) await previous.disposed;
+			this._codegraph = this._codegraphGrantFactory(this._codegraphGrant);
+		}
 		this.syncQueueModesFromSettings();
 		resetApiProviders();
 		await this._resourceLoader.reload();
 		// Activate tools newly added to defaultTools. Removed ones stay active, and tools disabled
 		// during the session stay disabled unless the setting newly adds them.
 		const addedDefaultTools = this._usesDefaultTools
-			? (this.settingsManager.getDefaultTools() ?? DEFAULT_TOOL_NAMES).filter(
-					(name) => !previousDefaultTools.has(name),
-				)
+			? this._getDefaultToolNames().filter((name) => !previousDefaultTools.has(name))
 			: [];
 		this._buildRuntime({
 			activeToolNames: [...this.getActiveToolNames(), ...addedDefaultTools],
