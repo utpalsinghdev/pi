@@ -2,13 +2,100 @@
 
 ## [Unreleased]
 
+### Changed
+
+- Codemode `image()` now also saves each image to a temp file and names the path in the result, so later turns can copy or move generated images ([#10310](https://github.com/earendil-works/pi/issues/10310))
+- Output files (full text of truncated tool output, binary MCP resources, codemode images) are now readable only by the user
+
+### Fixed
+
+- Fixed subscription logins such as Sign in with ChatGPT failing with `refresh_token_invalidated` after a request was cancelled during an OAuth token refresh
+- Fixed codemode failing for the rest of a session after a pnpm global update removed the running install, and added a restart hint when errors occur after pi was updated or removed on disk ([#10439](https://github.com/earendil-works/pi/issues/10439))
+- Fixed interactive sessions reporting a `read EIO` or `setRawMode EIO` crash (and asking to run /bug) when the terminal went away, e.g. after closing the window or resuming a suspended pi in a closed terminal
+
+## [1.0.2] - 2026-10-04
+
+### New Features
+
+- **Sampling by thinking level** — `samplingParamsByThinkingLevel` in `models.json` sets sampling parameters such as `temperature` and `top_p` for each thinking level on OpenAI-compatible APIs. See [Configure sampling by thinking level](docs/models.md#configure-sampling-by-thinking-level).
+
 ### Added
 
-- Added an `oauth.authServerMetadataUrl` setting for MCP servers that advertise a wrong OAuth authorization server or none. Pi uses the configured metadata document instead of discovery ([#10172](https://github.com/earendil-works/pi/issues/10172)).
+- Added `samplingParamsByThinkingLevel` to `models.json` for per-thinking-level sampling parameter overrides on OpenAI-compatible APIs. See [Configure sampling by thinking level](docs/models.md#configure-sampling-by-thinking-level) ([#9776](https://github.com/earendil-works/pi/pull/9776) by [@mrexodia](https://github.com/mrexodia))
+
+## [1.0.1] - 2026-10-03
+
+### New Features
+
+- **Nix flake** — `nix run github:earendil-works/pi/stable` runs the latest release, and `nix profile add github:earendil-works/pi/stable` installs it. See [Install pi](docs/quickstart.md#1-install-pi).
+- **Project overrides for MCP servers** — `.pi/mcp.json` and `/mcp` can enable, disable, or change the exposure of a user-level server for one project. See [Configure servers](docs/mcp.md#configure-servers).
+- **MCP Client ID Metadata Documents** — `oauth.clientRegistration: "cimd"` lets authorization servers allow pi by its document URL instead of dynamic registration. See [Authenticate with OAuth](docs/mcp.md#authenticate-with-oauth).
+- **Tool renderers for any tool** — `pi.registerToolRenderer()` draws calls to tools that are not registered yet, such as MCP tools in resumed sessions. See [Tool rendering](docs/extensions.md#tool-rendering).
+- **Cloudflare Clef classifiers** — `@cf/cloudflare/clef` and `@cf/cloudflare/clef-flash` are usable from codemode scripts and extensions. See [Use classifier models](docs/models.md#use-classifier-models).
+
+### Added
+
+- Added a copy key (`app.message.copy`, default `ctrl+x`) to OAuth sign-in screens in `/login`, `/mcp`, and `/mcp login`, which copies the sign-in URL when the browser cannot be opened or the wrapped link cannot be selected.
+- Added `oauth.clientRegistration: "cimd"` for MCP servers, which identifies pi with its Client ID Metadata Document on pi.dev instead of dynamic client registration, so authorization servers can allow pi by URL ([#10302](https://github.com/earendil-works/pi/issues/10302))
+- Added project overrides for user-level MCP servers: a `.pi/mcp.json` entry without `command` or `url` sets only `enabled`, `exposure`, and `toolExposure` of the user-level server, and `/mcp` can enable or disable a server for the current project ([#10277](https://github.com/earendil-works/pi/issues/10277))
+- Added Cloudflare's Clef and Clef Flash classifier models to `cloudflare-workers-ai`, usable from codemode scripts and extensions ([#10316](https://github.com/earendil-works/pi/pull/10316) by [@ndisidore](https://github.com/ndisidore), [#10322](https://github.com/earendil-works/pi/pull/10322) by [@RealAlexandreAI](https://github.com/RealAlexandreAI))
+- Added `pi.registerToolRenderer()`, which chooses how calls to a tool are drawn, including tools that are not registered ([#10285](https://github.com/earendil-works/pi/issues/10285))
+- Added a Nix flake for macOS and Linux: `nix run github:earendil-works/pi/stable` runs the latest release, and `nix profile add github:earendil-works/pi/stable` installs it. See [Install pi](docs/quickstart.md#1-install-pi) ([#9137](https://github.com/earendil-works/pi/pull/9137))
 
 ### Changed
 
+- `pi update` on global npm installations now recommends migrating to the managed installation from the pi.dev installer, which pins all dependencies.
+- Anthropic tools added or redefined mid-conversation are now defined inline in the conversation, so redefining a tool under the same name keeps the prompt cache instead of resending the full tool list.
+
+### Fixed
+
+- Fixed installations resolving vulnerable `brace-expansion` 5.0.9 by pinning `brace-expansion` 5.0.12 as a direct dependency (GHSA-q2hr-2g5m-vwhr, GHSA-qhr7-859c-m2p7, GHSA-6j4f-fj2g-mc7p) ([#10288](https://github.com/earendil-works/pi/issues/10288))
+- Fixed a trailing comma in `--models` adding an extra model to the model cycle ([#10334](https://github.com/earendil-works/pi/issues/10334))
+- Fixed a `codemode` script that prints in a loop crashing pi by running out of memory: a script fails once its output passes 16 Mi characters or 100000 items ([#10283](https://github.com/earendil-works/pi/issues/10283))
+- Fixed JPEG, GIF, and WebP images rendered by extensions through `Image` not appearing in Kitty, Ghostty, WezTerm, and Warp ([#10292](https://github.com/earendil-works/pi/issues/10292))
+- Fixed MCP tool calls in resumed sessions and HTML exports rendering fully expanded until their server connected, or for good if it never did ([#10285](https://github.com/earendil-works/pi/issues/10285))
+- Fixed fullscreen Kitty images collapsing to a one-row strip after scrolling in WezTerm ([#10319](https://github.com/earendil-works/pi/issues/10319))
+- Fixed "Selected model is at capacity" provider errors ending the turn instead of being retried ([#10278](https://github.com/earendil-works/pi/issues/10278))
+- Fixed Cloudflare AI Gateway Claude models failing with a 404 by using dashed model IDs (`claude-opus-5-5` instead of `claude-opus-5.5`)
+- Fixed Sign in with ChatGPT continuing when its callback port is taken by another login, which made the browser show "OAuth state mismatch"; it now fails with a port-in-use error ([#10265](https://github.com/earendil-works/pi/issues/10265))
+- Fixed Amazon Bedrock OpenAI models costing requests above 272k input tokens at the short-context rate; Bedrock models now include the pricing tiers listed on models.dev ([#10326](https://github.com/earendil-works/pi/issues/10326))
+- Fixed Amazon Bedrock Claude requests failing with "Invalid `signature` in `thinking` block" after the system prompt or tools changed ([#10324](https://github.com/earendil-works/pi/issues/10324))
+- Fixed Together DeepSeek V4 Pro losing its thinking level controls after Together renamed it to `deepseek-ai/DeepSeek-V4-Pro-0813` ([#10336](https://github.com/earendil-works/pi/pull/10336) by [@cv](https://github.com/cv))
+- Fixed the default NVIDIA model pointing at `nvidia/nemotron-3-super-120b-a12b`, which NVIDIA no longer serves; the default is now `nvidia/nemotron-3-ultra-550b-a55b`
+
+### Removed
+
+- Removed `npm-shrinkwrap.json` from the published package. npm installations no longer pin transitive dependencies, and library consumers can now override them. Use the pi.dev installer for pinned installations ([#5653](https://github.com/earendil-works/pi/issues/5653))
+
+## [1.0.0] - 2026-10-01
+
+### New Features
+
+- **Fullscreen by default** — The TUI now runs fullscreen. Set `tuiMode` to `"regular"` to keep the terminal's normal scrollback. See [Terminal and display](docs/settings.md#terminal-and-display).
+- **Leaner codemode** — About 40% fewer prompt tokens, and errors that tell the model how to recover. See [Codemode](docs/codemode.md).
+- **Image generation in codemode** — Scripts call `models.generateImages()` with the session's credentials. See [Generate images](docs/codemode.md#generate-images) and [Use image models](docs/models.md#use-image-models).
+- **Radius in `/login`** — Sign in with Radius and set up its MCP server in one step. See [Radius](docs/providers.md#radius).
+- **Anthropic copy code login** — Sign in when the browser runs on another machine. See [Authenticate interactively](docs/providers.md#authenticate-interactively).
+- **MCP OAuth hardening** — `oauth.authServerMetadataUrl`, RFC 9207 `iss` checks, credentials per server, and step-up sign-in that keeps granted scopes. See [Authenticate with OAuth](docs/mcp.md#authenticate-with-oauth).
+- **Header-only quiet startup** — `quietStartup: "header"` keeps the version and key hints and hides the rest. See [Terminal and display](docs/settings.md#terminal-and-display).
+
+### Added
+
+- Added an `oauth.authServerMetadataUrl` setting for MCP servers that advertise a wrong OAuth authorization server or none. Pi uses the configured metadata document instead of discovery ([#10172](https://github.com/earendil-works/pi/issues/10172)).
+- Added `quietStartup: "header"`, which keeps the startup header with version and key hints but hides the model scope line and loaded-resource listing.
+- Added `models.generateImages()` to codemode scripts. It runs image models such as OpenRouter's with the session's credentials and returns base64 image blocks that `image()` attaches to the result; usage counts toward the session cost like `models.classify()`. Extensions can call `ctx.modelRegistry.generateImages()`. See [Use image models](docs/models.md#use-image-models).
+- Added a copy code login method to Anthropic `/login` for headless setups where the browser runs on another machine ([#10194](https://github.com/earendil-works/pi/pull/10194) by [@lucasmeijer](https://github.com/lucasmeijer)).
+
+### Changed
+
+- Changed the default TUI mode to fullscreen. Set `tuiMode` to `"regular"` or pass `--tui-mode regular` to keep the terminal's normal scrollback.
+- `/login` now offers "Sign in with Radius" at the top level, as the last option, with its status. After a Radius sign-in, `/login` offers to configure the Radius MCP server in the global `mcp.json` with `"auth": { "provider": "radius" }` and reloads. Cancelling a login returns to the menu it was started from.
+- The provider docs page is renamed to [Providers](docs/providers.md), its "Cloud Providers" section is now "Provider Specific Config", and it documents Radius first.
 - MCP OAuth credentials are now stored per server name and URL, so MCP servers with the same URL can sign in with different accounts. Credentials stored by URL alone move to the first server that uses them ([#10252](https://github.com/earendil-works/pi/issues/10252)).
+- Codemode costs far fewer prompt tokens: with the default tools and codemode active, a GPT-5.6 request shrinks from about 5,300 to 3,300 tokens. The `codemode` description lists the script globals in one line each and points to the new [Codemode](docs/codemode.md) reference for the `models` API, which the model reads when it needs it. Declared tools say in one line how scripts call them and what the call resolves to, instead of repeating their full declaration, and the system prompt's codemode guidance and MCP server section are shorter.
+- Codemode errors now say how to recover: reading a tool or `models` member that does not exist names the close matches (`tools.Bash` suggests `tools.bash`), `models.classify()` and `models.generateImages()` reject malformed arguments with the expected shape, an unknown model points to `models.getAvailableOfType()`, an oversized `store()` value explains what the store is for, and a script that generates images without showing them gets a note. Scripts that probed for a tool with `typeof tools.name` must use `"name" in tools`.
+- `/login` and `/logout` now label providers without credentials as "not configured" instead of "unconfigured".
+- OAuth browser pages now show the color Pi logo.
 
 ### Fixed
 
@@ -18,6 +105,13 @@
 - Fixed `--provider` without `--model` being silently ignored and running the default model from another provider; it now fails with an error ([#10236](https://github.com/earendil-works/pi/issues/10236)).
 - Fixed MCP servers that ask for more scope (`insufficient_scope`) requesting sign-in over and over. The new sign-in requested only the missing scopes, so the new token lost access the previous one had; it now keeps the granted scopes.
 - Fixed user messages in the transcript keeping two full-width copies of every rendered line; they keep one, with identical output.
+- Fixed `/login` and `/logout` labeling every OAuth sign-in, including Radius, as a subscription; only subscription-backed providers say "subscription", other OAuth sign-ins say "account".
+- Fixed the startup header logo rendering with gaps in Apple Terminal; it now shows a colored "Pi" with the version instead.
+- Fixed deferred MCP tools that `tool_search` loaded being dropped on resume and `/reload` even when their server reconnected before the next prompt, because the session restored its tools before the MCP servers reconnected.
+- Fixed the system theme making pastel palettes such as Catppuccin Frappe much more vivid; palette colors now keep their chroma ([#10255](https://github.com/earendil-works/pi/issues/10255), [#10293](https://github.com/earendil-works/pi/pull/10293) by [@dgtlntv](https://github.com/dgtlntv)).
+- Fixed slash command autocompletion not triggering when the input starts with whitespace ([#10218](https://github.com/earendil-works/pi/pull/10218) by [@haoqixu](https://github.com/haoqixu)).
+- Fixed color bleeding past mouse selections and search highlights in fullscreen mode when a styled token ends at the highlight boundary ([#10169](https://github.com/earendil-works/pi/issues/10169)).
+- Fixed memory retained per rendered message in the transcript; a long assistant message keeps about a fifth of the heap it kept before.
 
 ## [0.99.2] - 2026-09-30
 

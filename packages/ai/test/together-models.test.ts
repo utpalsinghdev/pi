@@ -58,14 +58,16 @@ describe("Together models", () => {
 			thinkingFormat: "openai",
 		});
 
-		const deepSeekV4Flash = getModel("together", "deepseek-ai/DeepSeek-V4-Flash-0731");
-		expect(deepSeekV4Flash.thinkingLevelMap).toEqual({
+		const deepSeekV4 = getModel("together", "deepseek-ai/DeepSeek-V4-Pro-0813");
+		expect(deepSeekV4.thinkingLevelMap).toEqual({
 			minimal: null,
 			low: null,
 			medium: null,
+			high: "high",
+			xhigh: null,
 		});
-		expect(deepSeekV4Flash.compat).toMatchObject({
-			supportsReasoningEffort: false,
+		expect(deepSeekV4.compat).toMatchObject({
+			supportsReasoningEffort: true,
 			thinkingFormat: "together",
 		});
 
