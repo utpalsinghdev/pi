@@ -100,7 +100,7 @@ describe("SDK CodeGraph session lifecycle", () => {
 		writeFileSync(join(root, ".pi", "settings.json"), JSON.stringify({ codegraph: { enabled: false } }));
 		const session = await createSession(root, agentDir);
 
-		expect(session.agent.state.tools.some((tool) => tool.name === "codebase")).toBe(false);
+		expect(session.agent.state.tools.some((tool) => tool.name === "codebase")).toBe(true);
 		expect(session.agent.state.tools.some((tool) => tool.name === "read")).toBe(true);
 		expect(await getStatus(session)).toMatchObject({ enabled: false, state: "disabled" });
 		expect(existsSync(join(root, ".codegraph"))).toBe(false);
@@ -210,7 +210,7 @@ describe("SDK CodeGraph session lifecycle", () => {
 		writeFileSync(join(root, ".pi", "settings.json"), JSON.stringify({ codegraph: { enabled: false } }));
 		await session.reload();
 
-		expect(session.agent.state.tools.some((tool) => tool.name === "codebase")).toBe(false);
+		expect(session.agent.state.tools.some((tool) => tool.name === "codebase")).toBe(true);
 		expect(session.agent.state.tools.some((tool) => tool.name === "read")).toBe(true);
 		expect(await getStatus(session)).toMatchObject({ enabled: false, state: "disabled" });
 		if (process.platform === "linux") expect(childPids()).toEqual(baselineChildren);

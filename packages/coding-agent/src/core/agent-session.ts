@@ -2155,6 +2155,37 @@ export class AgentSession {
 		await this._runAgentPrompt(messages);
 	}
 
+	/** Refresh the session-owned index; model tools never grant indexing consent themselves. */
+	private async _refreshCodegraph(signal?: AbortSignal): Promise<CodegraphStatus> {
+		signal?.throwIfAborted();
+		let service = this._codegraph;
+		if (!service) throw new Error("CodeGraph service unavailable.");
+		const currentStatus = service.status();
+		if (
+			currentStatus.reason === "Explicit root-scoped CodeGraph grant required" &&
+			currentStatus.root === canonicalizePath(this._cwd) &&
+			this.settingsManager.getCodegraphSettings().enabled &&
+			this._extensionMode === "tui" &&
+			this._extensionUIContext &&
+			this._codegraphGrantFactory
+		) {
+			const confirmed = await this._extensionUIContext.confirm(
+				"Allow CodeGraph indexing?",
+				`Index files under ${currentStatus.root} and write graph data to ${currentStatus.storagePath}?`,
+			);
+			signal?.throwIfAborted();
+			if (confirmed) {
+				const previous = service;
+				this._codegraphGrant = { root: currentStatus.root };
+				service = this._codegraphGrantFactory(this._codegraphGrant);
+				this._codegraph = service;
+				previous.dispose();
+				void previous.disposed.catch(() => {});
+			}
+		}
+		return service.refresh(signal);
+	}
+
 	private async _tryExecuteCodegraphCommand(text: string): Promise<boolean> {
 		const match = /^\/codegraph(?:\s+(.*))?$/.exec(text);
 		if (!match) return false;
@@ -2178,42 +2209,15 @@ export class AgentSession {
 		}
 
 		const command = argument === "refresh" ? "refresh" : "status";
-		let service = this._codegraph;
 		try {
-			const currentStatus = service.status();
-			if (
-				command === "refresh" &&
-				currentStatus.reason === "Explicit root-scoped CodeGraph grant required" &&
-				currentStatus.root === canonicalizePath(this._cwd) &&
-				this.settingsManager.getCodegraphSettings().enabled &&
-				this._extensionMode === "tui" &&
-				this._extensionUIContext &&
-				this._codegraphGrantFactory
-			) {
-				const confirmed = await this._extensionUIContext.confirm(
-					"Allow CodeGraph indexing?",
-					`Index files under ${currentStatus.root} and write graph data to ${currentStatus.storagePath}?`,
-				);
-				if (confirmed) {
-					const previous = service;
-					this._codegraphGrant = { root: currentStatus.root };
-					service = this._codegraphGrantFactory(this._codegraphGrant);
-					this._codegraph = service;
-					previous.dispose();
-					void previous.disposed.catch(() => {});
-					if (this._usesDefaultTools && this._getDefaultToolNames().includes("codebase")) {
-						this.setActiveToolsByName([...this.getActiveToolNames(), "codebase"]);
-					}
-				}
-			}
-			const status = command === "refresh" ? await service.refresh() : service.status();
+			const status = command === "refresh" ? await this._refreshCodegraph() : this._codegraph.status();
 			const message =
 				command === "refresh" && status.reason === "Explicit root-scoped CodeGraph grant required"
 					? `Authorization required: ${status.reason}.\n${formatCodegraphStatus(status)}`
 					: formatCodegraphStatus(status);
 			this._emit({ type: "codegraph_result", command, status, message });
 		} catch (error) {
-			const status = service.status();
+			const status = this._codegraph.status();
 			this._emit({
 				type: "codegraph_result",
 				command,
@@ -3555,6 +3559,16 @@ export class AgentSession {
 				getScopedModels: () => this._scopedModels,
 				isIdle: () => this.isIdle,
 				isProjectTrusted: () => this.settingsManager.isProjectTrusted(),
+				getCodegraph: () =>
+					this._codegraph
+						? {
+								status: () => {
+									if (!this._codegraph) throw new Error("CodeGraph service unavailable.");
+									return this._codegraph.status();
+								},
+								refresh: (signal) => this._refreshCodegraph(signal),
+							}
+						: undefined,
 				getSignal: () => this.agent.signal,
 				abort: () => {
 					if (this._extensionAbortHandler) {
@@ -3728,12 +3742,7 @@ export class AgentSession {
 			Array.isArray(raw) && raw.length > 0 && raw.every((entry) => typeof entry === "string" && /^[+-]/.test(entry));
 		const inheritsDefaults = configured === undefined || (modifierOnly && !raw?.includes("-codebase"));
 		const names = [...(configured ?? DEFAULT_TOOL_NAMES)];
-		if (
-			inheritsDefaults &&
-			this.settingsManager.getCodegraphSettings().enabled &&
-			this._codegraph?.status().eligible &&
-			!names.includes("codebase")
-		) {
+		if (inheritsDefaults && this._codegraph && !names.includes("codebase")) {
 			names.push("codebase");
 		}
 		return names;
@@ -3760,7 +3769,7 @@ export class AgentSession {
 						read: { autoResizeImages },
 						bash: { commandPrefix: shellCommandPrefix, shellPath },
 					}),
-					...(initialCodegraph && this.settingsManager.getCodegraphSettings().enabled
+					...(initialCodegraph
 						? { codebase: createCodebaseToolDefinition(() => this._codegraph ?? initialCodegraph) }
 						: {}),
 				};

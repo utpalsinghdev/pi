@@ -241,6 +241,8 @@ Register an entry or message renderer when custom stored content should appear i
 Use `ctx.ui.custom()` only when the interaction needs its own rendering and input.
 See [Terminal UI](tui.md) for component, focus, overlay, theme, and performance guidance.
 
+Extensions can inspect the current native index through optional `ctx.codegraph.status()` and request a refresh with `await ctx.codegraph.refresh(signal)`. Refresh preserves exact-root user consent and enabled settings; it does not launch a second indexer. See [Native CodeGraph](codegraph.md#extension-control) and [`codegraph-control.ts`](../examples/extensions/codegraph-control.ts) for a model-callable status/refresh tool.
+
 Extensions load in interactive, RPC, JSON, and print modes.
 Interactive mode provides the complete terminal UI.
 RPC can forward supported dialogs and notifications through the [RPC Extension UI protocol](rpc-extension-ui.md), but not custom terminal components; JSON and print modes have no UI.

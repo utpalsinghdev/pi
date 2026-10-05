@@ -377,6 +377,7 @@ export class ExtensionRunner {
 		normalizeBuildSystemPromptOptions({ cwd: this.cwd });
 	private executeToolFn: ExtensionContextActions["executeTool"];
 	private getCallableToolsFn: () => readonly AgentTool[] = () => [];
+	private getCodegraphFn: () => ExtensionContext["codegraph"] = () => undefined;
 	/** Registered MCP servers already reported as unhandled. */
 	private readonly reportedMcpServers = new Set<string>();
 	private newSessionHandler: NewSessionHandler = async () => ({ cancelled: false });
@@ -453,6 +454,7 @@ export class ExtensionRunner {
 		this.setSystemPromptOverrideFn = contextActions.setSystemPromptOverride ?? (() => {});
 		this.executeToolFn = contextActions.executeTool;
 		this.getCallableToolsFn = contextActions.getCallableTools ?? (() => []);
+		this.getCodegraphFn = contextActions.getCodegraph ?? (() => undefined);
 
 		// Servers registered from now on reach the extension that connects them right away. Servers
 		// registered during loading are read on session_start.
@@ -911,6 +913,22 @@ export class ExtensionRunner {
 			isIdle: () => {
 				runner.assertActive();
 				return runner.isIdleFn();
+			},
+			get codegraph() {
+				runner.assertActive();
+				const control = runner.getCodegraphFn();
+				return control
+					? {
+							status: () => {
+								runner.assertActive();
+								return control.status();
+							},
+							refresh: (signal?: AbortSignal) => {
+								runner.assertActive();
+								return control.refresh(signal);
+							},
+						}
+					: undefined;
 			},
 			isProjectTrusted: () => {
 				runner.assertActive();

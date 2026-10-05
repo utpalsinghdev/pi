@@ -58,6 +58,7 @@ import type { Static, TSchema } from "typebox";
 import type { Theme } from "../../modes/interactive/theme/theme.ts";
 import type { BashResult } from "../bash-executor.ts";
 import type { CacheWarmingDecisionEvent, CacheWarmingDecisionEventResult } from "../cache-warmer.ts";
+import type { CodegraphService } from "../codegraph/types.ts";
 import type { CompactionPreparation, CompactionResult } from "../compaction/index.ts";
 import type { EventBus } from "../event-bus.ts";
 import type { ExecOptions, ExecResult } from "../exec.ts";
@@ -346,6 +347,8 @@ export interface ExtensionContext {
 	thinkingLevel?: ThinkingLevel;
 	/** Whether the agent is idle (not streaming) */
 	isIdle(): boolean;
+	/** Current session's native index. Refresh preserves indexing consent and settings. */
+	readonly codegraph?: Pick<CodegraphService, "status" | "refresh">;
 	/** Whether project-local trust is active for this context. */
 	isProjectTrusted(): boolean;
 	/** The current abort signal, or undefined when the agent is not streaming. */
@@ -2178,6 +2181,8 @@ export interface ExtensionContextActions {
 	) => Promise<AgentToolCallOutcome>;
 	/** Backs `ExtensionToolContext.tools`. */
 	getCallableTools?: () => readonly AgentTool[];
+	/** Backs `ExtensionContext.codegraph`; optional for standalone extension runners. */
+	getCodegraph?: () => ExtensionContext["codegraph"];
 }
 
 /**

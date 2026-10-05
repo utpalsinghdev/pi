@@ -36,9 +36,19 @@ Graph data belongs in `<authorized-project>/.codegraph/`; it must not be moved t
 
 `/codegraph` and `/codegraph status` report on-demand state. `/codegraph refresh` requests an incremental refresh. These commands do not start an agent turn, require provider authentication, add conversation context, or depend on extensions. In print text mode they write only the requested result; JSON and RPC emit a framed `codegraph_result` event. Background indexing is quiet: Pi adds no footer, spinner, status item, notification, or automatic context.
 
+The native `codebase` tool is declared alongside the default tools before indexing is authorized or ready. Its declaration does not authorize indexing: queries return `authorization_required`, `disabled`, or `not_ready` until the service can answer. Granting consent or refreshing the index does not add or remove default tool declarations. Explicit tool allowlists, denylists, and `defaultTools` replacements remain respected.
+
 The `codebase` tool provides `search`, `symbols`, `callers`, `callees`, `dependencies`, `impact`, and `context`. Its search is lexical retrieval over indexed symbol metadata plus graph context. It is not embedding-based semantic search and does not replace `grep` for exact strings, arbitrary source text, generated or unindexed files, or unsupported languages. Static relationships can be incomplete or heuristic, especially for indirect/runtime behavior. Treat scores as relative rankings and read source before editing.
 
 Results carry project-relative paths, identifiers and line ranges where available, revision/freshness/partial state, and explicit limits or failure status. Caller/callee results include the indexed query `subject` separately from the limited neighbor list. Dependencies include the indexed file `subject` and effective `imports` or `dependents` direction; the default is `imports`. Unindexed or excluded files return `not_found`, not an echoed origin. Traversal depth `0` returns no neighbors while retaining a resolved caller/callee subject. Responses are valid JSON text and are bounded to at most 8,000 UTF-8 bytes; requested budgets below 1,024 bytes are rejected. Truncation omits complete records rather than cutting paths or identifiers. Smaller budgets can be requested within that range.
+
+## Extension control
+
+`ctx.codegraph` exposes `status()` and `refresh(signal?)` for the current session's native service. Status returns actual state, root, freshness, partial state, watcher health, counts, and errors. Refresh uses the same exact-root consent flow as `/codegraph refresh`; it never grants permission on behalf of the model. Without an interactive consent UI it returns the authorization-required status. Initial indexing may still be running when refresh returns, so inspect the returned state rather than assuming completion.
+
+The optional API is absent in standalone extension runners without a native service. It follows the current service across consent and reload; stale extension contexts cannot use it after their runtime is invalidated. It does not change enabled settings or create an independent indexer.
+
+Load [`examples/extensions/codegraph-control.ts`](../examples/extensions/codegraph-control.ts) to expose `codegraph_control` with `status` and `refresh` operations to the model. The tool returns JSON containing native status and whether `codebase` is registered and active. It does not queue a slash command or require the user to paste terminal output. Registering the extension changes the tool loadout once; provider cache hits are not guaranteed.
 
 ## Data limits
 

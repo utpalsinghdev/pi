@@ -449,12 +449,7 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 	const inheritsDefaultTools =
 		configuredDefaultToolNames === undefined ||
 		(defaultToolsAreModifiersOnly && !rawDefaultToolNames?.includes("-codebase"));
-	if (
-		inheritsDefaultTools &&
-		codegraph.status().eligible &&
-		getCodegraphSettings().enabled &&
-		!defaultActiveNames.includes("codebase")
-	) {
+	if (inheritsDefaultTools && !defaultActiveNames.includes("codebase")) {
 		defaultActiveNames.push("codebase");
 	}
 	const initialActiveToolNames = (options.tools ?? (options.noTools ? [] : defaultActiveNames)).filter(
