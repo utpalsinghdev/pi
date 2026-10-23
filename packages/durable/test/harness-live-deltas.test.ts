@@ -105,7 +105,7 @@ describe("pi.live deltas", () => {
 				name: "noop",
 				description: "noop",
 				parameters: Type.Object({}),
-				execute: async () => ({ content: [] }),
+				execute: async () => ({ output: [] }),
 			}),
 		);
 		setup.faux.setResponses([
@@ -283,13 +283,14 @@ describe("pi.live deltas", () => {
 		class RecordingStorage extends MemoryStorage {
 			override async commit(
 				writes: Parameters<MemoryStorage["commit"]>[0],
-				context: Parameters<MemoryStorage["commit"]>[1],
+				adopt: Parameters<MemoryStorage["commit"]>[1],
+				context: Parameters<MemoryStorage["commit"]>[2],
 			) {
 				let kind: "base" | "delta" | undefined;
 				for (const write of writes) {
 					if (write.type === "document.change" && write.id === liveId) kind = write.content.kind;
 				}
-				const seq = await super.commit(writes, context);
+				const seq = await super.commit(writes, adopt, context);
 				if (kind !== undefined) written.set(seq, kind);
 				return seq;
 			}
@@ -349,7 +350,7 @@ describe("pi.live deltas", () => {
 				description: "bad",
 				parameters: Type.Object({}),
 				// Not strict JSON: the result commit throws and the scheduler faults the task.
-				execute: async () => ({ content: [], details: { fn: (() => 1) as never } }),
+				execute: async () => ({ output: [], details: { fn: (() => 1) as never } }),
 			}),
 		);
 		setup.faux.setResponses([
@@ -390,7 +391,7 @@ describe("pi.live deltas", () => {
 				name: "noop",
 				description: "noop",
 				parameters: Type.Object({}),
-				execute: async () => ({ content: [] }),
+				execute: async () => ({ output: [] }),
 			}),
 		);
 		setup.faux.setResponses([

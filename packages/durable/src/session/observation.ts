@@ -1,183 +1,59 @@
-import type {
-	Context,
-	JsonValue,
-	ReplicatedStateSource,
-	ReplicatedStateSourceAttachment,
-	ReplicatedStateSourceFrame,
-} from "@earendil-works/chord";
+import type { Context, JsonValue, WatchEnd, WatchHandle } from "@earendil-works/chord";
 import { withoutAbortSignal } from "@earendil-works/chord/context";
 import type { Op } from "@earendil-works/chord/delta";
-import type { JsonObject, WatchEnd, WatchHandle } from "../types.ts";
+import { errorMessage } from "../errors.ts";
+import type { JsonObject } from "../types.ts";
 
 export type ObservedDocumentValue = Readonly<JsonObject> | null;
 
 /** Maximum exact committed frames retained behind one unavailable watch listener. */
 const MAX_PENDING_WATCH_FRAMES = 100;
 
-/** Canonical terminal update for a retired document incarnation. */
-export const RETIREMENT_OPERATIONS: readonly Op[] = [["r", null]];
-
-/**
- * Session-to-Chord bridge owned one-to-one by one attached state: a document, or a conversation view. A `null` value
- * retires it. @internal
- */
-export class CommittedStateSource<T = ObservedDocumentValue> implements ReplicatedStateSource<T> {
-	readonly #attachments = new Set<SessionSourceAttachment<T>>();
-	#release: (() => void) | undefined;
-	/** Released on disposal. */
-	#value: T | undefined;
-	#cursor = 0;
-	#retired = false;
-	#closed = false;
-
-	constructor(value: T, release: () => void) {
-		this.#value = value;
-		this.#release = release;
-	}
-
-	attach(): ReplicatedStateSourceAttachment<T> {
-		if (this.#closed) throw new Error("State source is closed");
-		const attachment = new SessionSourceAttachment({ value: this.#value as T, cursor: this.#cursor }, () => {
-			this.#attachments.delete(attachment);
-			if (this.#attachments.size === 0) this.#finishDisposal();
-		});
-		this.#attachments.add(attachment);
-		return attachment;
-	}
-
-	advance(value: T, ops: readonly Op[], context: Context): void {
-		if (this.#closed || this.#retired) return;
-		this.#value = value;
-		this.#cursor += 1;
-		if (value === null) this.#retired = true;
-		const frame: ReplicatedStateSourceFrame<T> = {
-			cursor: this.#cursor,
-			value,
-			ops,
-			context,
-		};
-		for (const attachment of [...this.#attachments]) attachment.publish(frame);
-	}
-
-	closeSession(): void {
-		if (this.#closed) return;
-		for (const attachment of [...this.#attachments]) attachment.dispose();
-		this.#finishDisposal();
-	}
-
-	#finishDisposal(): void {
-		if (this.#closed) return;
-		this.#closed = true;
-		this.#value = undefined;
-		const release = this.#release;
-		this.#release = undefined;
-		release?.();
-	}
-}
-
-class SessionSourceAttachment<T> implements ReplicatedStateSourceAttachment<T> {
-	readonly snapshot: { readonly value: T; readonly cursor: number };
-	#release: (() => void) | undefined;
-	readonly #frames: ReplicatedStateSourceFrame<T>[] = [];
-	#listener: ((frame: ReplicatedStateSourceFrame<T>) => void) | undefined;
-	#activated = false;
-	#disposed = false;
-	#scheduled = false;
-	#delivering = false;
-
-	constructor(snapshot: { readonly value: T; readonly cursor: number }, release: () => void) {
-		this.snapshot = snapshot;
-		this.#release = release;
-	}
-
-	activate(listener: (frame: ReplicatedStateSourceFrame<T>) => void): void {
-		if (this.#activated) throw new Error("State attachment is already active");
-		if (this.#disposed) throw new Error("State attachment is disposed");
-		this.#activated = true;
-		this.#listener = listener;
-		this.#drain();
-	}
-
-	publish(frame: ReplicatedStateSourceFrame<T>): void {
-		if (this.#disposed) return;
-		this.#frames.push(frame);
-		if (!this.#activated || this.#delivering || this.#scheduled) return;
-		this.#scheduled = true;
-		queueMicrotask(() => {
-			this.#scheduled = false;
-			if (this.#disposed) return;
-			try {
-				this.#drain();
-			} catch {
-				// Chord's frame listener contains source-contract failures. Isolate an
-				// unexpected direct listener failure to this attachment as well.
-				this.dispose();
-			}
-		});
-	}
-
-	dispose(): void {
-		if (this.#disposed) return;
-		this.#disposed = true;
-		this.#frames.length = 0;
-		this.#listener = undefined;
-		const release = this.#release;
-		this.#release = undefined;
-		release?.();
-	}
-
-	#drain(): void {
-		const listener = this.#listener;
-		if (listener === undefined || this.#delivering || this.#disposed) return;
-		this.#delivering = true;
-		try {
-			while (!this.#disposed) {
-				const frame = this.#frames.shift();
-				if (frame === undefined) break;
-				listener(frame);
-			}
-		} finally {
-			this.#delivering = false;
-		}
-	}
-}
+/** Canonical terminal frame of a retired document incarnation. */
+const RETIREMENT_OPERATIONS: readonly Op[] = [["r", null]];
 
 type WatchFrame<T> = {
 	readonly value: T;
 	readonly ops: readonly Op[];
 	readonly context: Context;
+	/** The retirement frame: the watch ends `retired` once it is delivered. */
+	readonly retires?: true;
 };
 
+type WatchListener<T> = (value: T, ops: readonly Op[], context: Context) => Promise<void>;
+
 /**
- * Serialized exact-frame watch bound to one document incarnation or conversation view. A `null` value retires it.
+ * Serialized exact-frame watch bound to one document incarnation or conversation view. Its source ends it explicitly:
+ * `retire()` for a retired document, `end()` for a closed or failed Session. Termination drops every reference the
+ * watch holds into its source, so a stopped watch that is still referenced keeps nothing but its last value alive.
  * @internal
  */
 export class CommittedWatch<T = ObservedDocumentValue> implements WatchHandle<T> {
-	readonly #detach: () => void;
-	readonly #replace: (() => T) | undefined;
-	readonly #closedPromise: Promise<WatchEnd>;
+	#detach: (() => void) | undefined;
+	#report: ((error: unknown) => void) | undefined;
+	#replace: (() => T) | undefined;
+	readonly #closed = Promise.withResolvers<WatchEnd>();
 	readonly #pending: WatchFrame<T>[] = [];
-	#resolveClosed!: (end: WatchEnd) => void;
 	#value: T;
-	#listener: ((value: T, ops: readonly Op[], context: Context) => Promise<void>) | undefined;
+	#listener: WatchListener<T> | undefined;
 	#started = false;
 	#scheduled = false;
 	#running = false;
-	#detached = false;
 	#retired = false;
+	/** Set once, by `#terminate()`. */
 	#end: WatchEnd | undefined;
-	#resolved = false;
 	#cancellationSignal: AbortSignal | undefined;
 	#cancellationListener: (() => void) | undefined;
 
-	/** `replace` gives the value an overflow delivers; by default the newest value. */
-	constructor(value: T, detach: () => void, replace?: () => T) {
+	/**
+	 * `report` gets a listener's throw, which also ends the watch. `replace` gives the value an overflow delivers; by
+	 * default the newest value.
+	 */
+	constructor(value: T, detach: () => void, report: (error: unknown) => void, replace?: () => T) {
 		this.#value = value;
 		this.#detach = detach;
+		this.#report = report;
 		this.#replace = replace;
-		this.#closedPromise = new Promise((resolve) => {
-			this.#resolveClosed = resolve;
-		});
 	}
 
 	get value(): T {
@@ -185,10 +61,10 @@ export class CommittedWatch<T = ObservedDocumentValue> implements WatchHandle<T>
 	}
 
 	get closed(): Promise<WatchEnd> {
-		return this.#closedPromise;
+		return this.#closed.promise;
 	}
 
-	start(listener: (value: T, ops: readonly Op[], context: Context) => Promise<void>): void {
+	start(listener: WatchListener<T>): void {
 		if (this.#started) throw new Error("Watch is already started");
 		if (this.#end !== undefined) throw new Error("Watch is stopped");
 		this.#started = true;
@@ -198,7 +74,7 @@ export class CommittedWatch<T = ObservedDocumentValue> implements WatchHandle<T>
 
 	stop(): Promise<WatchEnd> {
 		this.#terminate({ reason: "stopped" });
-		return this.#closedPromise;
+		return this.#closed.promise;
 	}
 
 	observeCancellation(signal: AbortSignal): void {
@@ -214,13 +90,13 @@ export class CommittedWatch<T = ObservedDocumentValue> implements WatchHandle<T>
 		this.#terminate({ reason: "cancelled" });
 	}
 
-	closeSession(): void {
-		this.#terminate({ reason: "session_closed" });
+	/** The source closed: end with `ended`, or with `failed` and the error when the Session failed. */
+	end(failure?: { readonly error: unknown }): void {
+		this.#terminate(failure === undefined ? { reason: "ended" } : { reason: "failed", error: failure.error });
 	}
 
 	advance(value: T, ops: readonly Op[], context: Context): void {
 		if (this.#end !== undefined || this.#retired) return;
-		if (value === null) this.#retired = true;
 		if (this.#pending.length >= MAX_PENDING_WATCH_FRAMES) {
 			this.#pending.length = 0;
 			const replacement = this.#replace?.() ?? value;
@@ -228,6 +104,18 @@ export class CommittedWatch<T = ObservedDocumentValue> implements WatchHandle<T>
 		} else {
 			this.#pending.push({ value, ops, context });
 		}
+		if (this.#started) this.#schedule();
+	}
+
+	/**
+	 * The document incarnation retired: queue the last frame, `[["r", null]]` with value `null`, after which the watch
+	 * ends `retired`. An overflowing backlog is dropped, since the frame replaces the root anyway.
+	 */
+	retire(this: CommittedWatch<ObservedDocumentValue>, context: Context): void {
+		if (this.#end !== undefined || this.#retired) return;
+		this.#retired = true;
+		if (this.#pending.length >= MAX_PENDING_WATCH_FRAMES) this.#pending.length = 0;
+		this.#pending.push({ value: null, ops: RETIREMENT_OPERATIONS, context, retires: true });
 		if (this.#started) this.#schedule();
 	}
 
@@ -241,26 +129,25 @@ export class CommittedWatch<T = ObservedDocumentValue> implements WatchHandle<T>
 	}
 
 	async #drain(): Promise<void> {
-		if (this.#running || this.#end !== undefined || !this.#started) {
-			this.#finishIfReady();
-			return;
-		}
+		if (this.#running || this.#end !== undefined || !this.#started) return;
 		this.#running = true;
 		try {
 			while (this.#end === undefined) {
 				const frame = this.#pending.shift();
-				if (frame === undefined) break;
+				const listener = this.#listener;
+				if (frame === undefined || listener === undefined) break;
 				this.#value = frame.value;
 				const deliveryContext = withoutAbortSignal(frame.context);
 				try {
-					await this.#listener!(frame.value, frame.ops, deliveryContext);
+					await listener(frame.value, frame.ops, deliveryContext);
 				} catch (error) {
 					if (this.#end === undefined) {
+						this.#report?.(error);
 						this.#terminate({ reason: "listener_error", error: toError(error) });
 					}
 					break;
 				}
-				if (frame.value === null) {
+				if (frame.retires === true) {
 					this.#terminate({ reason: "retired" });
 					break;
 				}
@@ -268,34 +155,32 @@ export class CommittedWatch<T = ObservedDocumentValue> implements WatchHandle<T>
 		} finally {
 			this.#running = false;
 			if (this.#end === undefined && this.#pending.length > 0) this.#schedule();
-			this.#finishIfReady();
 		}
 	}
 
+	/**
+	 * End the watch, once: detach, drop pending frames and every reference into the source, and settle `closed`. A
+	 * callback already running keeps running.
+	 */
 	#terminate(end: WatchEnd): void {
 		if (this.#end !== undefined) return;
 		this.#end = end;
-		this.#detachNow();
+		const detach = this.#detach;
+		this.#detach = undefined;
+		this.#report = undefined;
+		this.#replace = undefined;
+		this.#listener = undefined;
 		this.#pending.length = 0;
-		this.#finishIfReady();
-	}
-
-	#detachNow(): void {
-		if (this.#detached) return;
-		this.#detached = true;
-		this.#detach();
-	}
-
-	#finishIfReady(): void {
-		if (this.#resolved || this.#end === undefined) return;
-		this.#resolved = true;
-		if (this.#cancellationSignal !== undefined && this.#cancellationListener !== undefined) {
-			this.#cancellationSignal.removeEventListener("abort", this.#cancellationListener);
+		if (this.#cancellationListener !== undefined) {
+			this.#cancellationSignal?.removeEventListener("abort", this.#cancellationListener);
 		}
-		this.#resolveClosed(this.#end);
+		this.#cancellationSignal = undefined;
+		this.#cancellationListener = undefined;
+		detach?.();
+		this.#closed.resolve(end);
 	}
 }
 
 function toError(error: unknown): Error {
-	return error instanceof Error ? error : new Error(String(error));
+	return error instanceof Error ? error : new Error(errorMessage(error));
 }

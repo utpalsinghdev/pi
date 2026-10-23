@@ -6,6 +6,7 @@ import {
 	type Component,
 	CURSOR_MARKER,
 	type Focusable,
+	renderFakeCursor,
 	type TUI,
 	type TuiMouseEvent,
 	type TuiMouseEventResult,
@@ -605,7 +606,7 @@ export class Editor implements Component, Focusable {
 				const marker = emitCursorMarker ? CURSOR_MARKER : "";
 
 				if (this.isEditorEmpty() && this.placeholder) {
-					const cursor = "\x1b[7m \x1b[27m";
+					const cursor = renderFakeCursor(" ");
 					const placeholderWidth = Math.max(0, contentWidth - 1);
 					const placeholder = this.placeholderStyle(sliceByColumn(this.placeholder, 0, placeholderWidth, true));
 					displayText = marker + cursor + placeholder;
@@ -616,12 +617,12 @@ export class Editor implements Component, Focusable {
 					const afterGraphemes = [...this.segment(after, "grapheme")];
 					const firstGrapheme = afterGraphemes[0]?.segment || "";
 					const restAfter = after.slice(firstGrapheme.length);
-					const cursor = `\x1b[7m${firstGrapheme}\x1b[27m`;
+					const cursor = renderFakeCursor(firstGrapheme);
 					displayText = before + marker + cursor + restAfter;
 					// lineVisibleWidth stays the same - we're replacing, not adding
 				} else {
 					// Cursor is at the end - add highlighted space
-					const cursor = "\x1b[7m \x1b[27m";
+					const cursor = renderFakeCursor(" ");
 					displayText = before + marker + cursor;
 					lineVisibleWidth = lineVisibleWidth + 1;
 					// If cursor overflows content width into the padding, flag it

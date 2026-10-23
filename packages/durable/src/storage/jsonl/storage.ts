@@ -1,5 +1,6 @@
 import type { Context, JsonValue } from "@earendil-works/chord";
 import type { FileError, FileSystem } from "../../env/index.ts";
+import { StorageRequestError } from "../../errors.ts";
 import { idFromNumber, seqFromNumber } from "../../ids.ts";
 import type {
 	ConversationId,
@@ -274,7 +275,7 @@ export class JsonlStorage implements Storage {
 		return storage;
 	}
 
-	async commit(writes: readonly StorageWrite[], context: Context): Promise<Seq> {
+	async commit(writes: readonly StorageWrite[], adopt: (seq: Seq) => void, context: Context): Promise<Seq> {
 		this.assertUsable();
 		const prepared = this.memory.prepareCommit(writes);
 		const encoded = this.encodeCommit(prepared.seq, prepared.writes);
@@ -301,6 +302,8 @@ export class JsonlStorage implements Storage {
 		if (!marker.ok) throw this.poison(errorFromFile(`append to ${MAIN_FILE}`, marker.error));
 		const seq = prepared.apply();
 		this.adoptSidecarState(prepared.writes);
+		// The marker is appended: the batch is durable. Reclaiming sidecars comes after adoption.
+		adopt(seq);
 		await this.reclaimSidecars(reclamations, context);
 		return seq;
 	}
@@ -322,7 +325,7 @@ export class JsonlStorage implements Storage {
 	async entry(idOrConversationId: EntryId | ConversationId, idOrContext: EntryId | Context, context?: Context) {
 		if (context === undefined)
 			return this.store.entry(idFromNumber<EntryId>(idOrConversationId), idOrContext as Context);
-		if (typeof idOrContext !== "number") throw new TypeError("Storage.entry() requires an entry ID");
+		if (typeof idOrContext !== "number") throw new StorageRequestError("Storage.entry() requires an entry ID");
 		return this.store.entry(
 			idFromNumber<ConversationId>(idOrConversationId),
 			idFromNumber<EntryId>(idOrContext),

@@ -1,8 +1,8 @@
-import { type AttachedReplicatedState, type Context, type JsonValue, replicatedState } from "@earendil-works/chord";
+import type { Context, JsonValue, WatchHandle } from "@earendil-works/chord";
 import { withoutAbortSignal } from "@earendil-works/chord/context";
 import { applyImmutable, type NonEmptyPath, type Op, type Path } from "@earendil-works/chord/delta";
-import { CommittedStateSource, CommittedWatch } from "../session/observation.ts";
-import type { SessionImpl } from "../session/session.ts";
+import { CommittedWatch } from "../session/observation.ts";
+import { contained, type SessionImpl } from "../session/session.ts";
 import type {
 	CommitPublication,
 	ConversationDocToken,
@@ -12,7 +12,6 @@ import type {
 	EntryRecord,
 	JsonObject,
 	Storage,
-	WatchHandle,
 } from "../types.ts";
 import { AgentDoc } from "./agent.ts";
 import { activeEntries, captureContextBounds } from "./context.ts";
@@ -42,7 +41,8 @@ export type ViewObserver = {
 		publication: CommitPublication,
 		context: Context,
 	): void;
-	closeSession(): void;
+	/** The Session closed, or failed with `failure`. */
+	end(failure: { readonly error: unknown } | undefined): void;
 };
 
 const MOUNTED = [
@@ -85,37 +85,34 @@ export class ConversationViews {
 		this.#session = session;
 		this.#storage = storage;
 		VIEWS.set(session, this);
-		session.subscribeCommits((publication, context) => {
-			for (const [id, mount] of this.#mounts) advance(id, mount, publication, context);
+		session.observeCommits((publication, context) => {
+			for (const [id, mount] of this.#mounts)
+				advance(id, mount, publication, context, (error) => this.report(error));
 		});
 		session.subscribeClose(() => {
 			this.#closed = true;
 			for (const mount of this.#mounts.values())
-				for (const observer of [...mount.observers]) observer.closeSession();
+				for (const observer of [...mount.observers]) {
+					contained(
+						() => observer.end(this.#session.failure),
+						(error) => this.report(error),
+					);
+				}
 			this.#mounts.clear();
 		});
 	}
 
-	/** A disposable read-only Chord state of the view. */
-	async state(id: ConversationId, context: Context): Promise<AttachedReplicatedState<ConversationView>> {
-		const { observer, detach } = await this.attach(
-			id,
-			(value, release) => new CommittedStateSource<ConversationView>(value, release),
-			context,
-		);
-		try {
-			return replicatedState(observer);
-		} catch (error) {
-			detach();
-			throw error;
-		}
+	/** Report an observer's listener error through the Harness. */
+	report(error: unknown): void {
+		this.#session.report(error);
 	}
 
 	/** A serialized exact-frame watch of the view; cancelling `context` stops it. */
 	async watch(id: ConversationId, context: Context): Promise<WatchHandle<ConversationView>> {
 		const { observer } = await this.attach(
 			id,
-			(value, release) => new CommittedWatch<ConversationView>(value, release),
+			(value, release) =>
+				new CommittedWatch<ConversationView>(value, release, (error) => this.#session.report(error)),
 			context,
 		);
 		const signal = context.abortSignal;
@@ -145,7 +142,7 @@ export class ConversationViews {
 			};
 			const observer = await create(mount.value, detach, this.#storage);
 			// Close or cancellation may begin while the mount hydrates; register nothing then.
-			if (this.#closed) throw closedError();
+			if (this.#closed) throw closedError(this.#session);
 			context.abortSignal?.throwIfAborted();
 			this.#mounts.set(id, mount);
 			mount.observers.add(observer);
@@ -170,8 +167,17 @@ export class ConversationViews {
 	}
 }
 
-/** Derive the mount's operations from one publication, apply them, and hand the revision to every observer. */
-function advance(id: ConversationId, mount: Mount, publication: CommitPublication, context: Context): void {
+/**
+ * Derive the mount's operations from one publication, apply them, and hand the revision to every observer; one that
+ * throws is reported through `report`, and the others still get it.
+ */
+function advance(
+	id: ConversationId,
+	mount: Mount,
+	publication: CommitPublication,
+	context: Context,
+	report: (error: unknown) => void,
+): void {
 	const docOps: Op[] = [];
 	const entryOps: Op[] = [];
 	let entries = mount.value.entries;
@@ -215,10 +221,12 @@ function advance(id: ConversationId, mount: Mount, publication: CommitPublicatio
 	if (ops.length > 0) {
 		const value = docOps.length === 0 ? mount.value : applyImmutable(mount.value, docOps);
 		mount.value = entries === value.entries ? value : { ...value, entries };
-		for (const observer of [...mount.observers]) observer.advance?.(mount.value, ops, frameContext);
+		for (const observer of [...mount.observers]) {
+			contained(() => observer.advance?.(mount.value, ops, frameContext), report);
+		}
 	}
 	for (const observer of [...mount.observers]) {
-		observer.publication?.(before, mount.value, ops, publication, frameContext);
+		contained(() => observer.publication?.(before, mount.value, ops, publication, frameContext), report);
 	}
 }
 

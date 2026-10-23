@@ -578,10 +578,10 @@ describe("SettingsManager", () => {
 	});
 
 	describe("editorPaddingX", () => {
-		it("should default to 1 and persist bounded values", async () => {
+		it("should default to 0 and persist bounded values", async () => {
 			const manager = SettingsManager.create(projectDir, agentDir);
 
-			expect(manager.getEditorPaddingX()).toBe(1);
+			expect(manager.getEditorPaddingX()).toBe(0);
 
 			manager.setEditorPaddingX(3);
 			await manager.flush();
