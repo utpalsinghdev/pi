@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { fetchOpenRouterModelList } from "../scripts/openrouter-model-list.ts";
+import { fetchOpenRouterModelList } from "../catalog/sources/openrouter-model-list.ts";
 
 const model = { id: "provider/model", name: "Model" };
 const noWait = async (_milliseconds: number) => {};

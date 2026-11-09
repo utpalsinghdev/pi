@@ -1,5 +1,5 @@
-import { Type } from "@earendil-works/pi-ai";
 import { defineTool, type ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { Type } from "typebox";
 
 /** Inspect or refresh the current session's native index without another worker. */
 export default function codegraphControl(pi: ExtensionAPI) {
